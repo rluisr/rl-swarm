@@ -74,7 +74,7 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                 get_logger().info("Gradient checkpointing enabled for memory optimization")
 
     @property
-    def device(self):
+    def model_device(self):
         """Get the device of the model, handling DataParallel wrapped models."""
         if isinstance(self.model, nn.DataParallel):
             return next(self.model.module.parameters()).device
@@ -429,7 +429,7 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                     add_generation_prompt=True,
                     return_tensors="pt",
                 )
-                input_ids = input_ids.to(self.device)
+                input_ids = input_ids.to(self.model_device)
                 outputs = self.model.generate(input_ids, max_new_tokens=512)
                 answer = self.processing_class.decode(
                     outputs[0], skip_special_tokens=True
