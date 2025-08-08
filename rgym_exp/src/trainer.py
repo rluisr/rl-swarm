@@ -51,6 +51,23 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                 base_model.gradient_checkpointing_enable()
                 get_logger().info("Gradient checkpointing enabled for memory optimization")
 
+    def generate(self, *args, **kwargs):
+        """
+        Generate method that handles DataParallel wrapped models.
+        
+        Args:
+            *args: Positional arguments to pass to the model's generate method
+            **kwargs: Keyword arguments to pass to the model's generate method
+            
+        Returns:
+            The output from the model's generate method
+        """
+        # Handle DataParallel wrapped models
+        if isinstance(self.model, nn.DataParallel):
+            return self.model.module.generate(*args, **kwargs)
+        else:
+            return self.model.generate(*args, **kwargs)
+
     @torch.no_grad()
     def evaluate(
         self, state: GameState, data_manager: DataManager, reward_manager: RewardManager

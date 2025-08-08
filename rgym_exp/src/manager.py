@@ -237,7 +237,9 @@ class SwarmGameManager(BaseGameManager, DefaultGameManagerMixin):
                 if repo_id is None:
                     repo_id = Path(self.trainer.args.output_dir).name
 
-                self.trainer.model.push_to_hub(
+                # Handle DataParallel wrapped models
+                model = self.trainer.model.module if isinstance(self.trainer.model, nn.DataParallel) else self.trainer.model
+                model.push_to_hub(
                     repo_id=repo_id,
                     token=self.hf_token,
                     commit_message=f"rl-swarm: round {self.state.round}, agent {self.animal_name}",
