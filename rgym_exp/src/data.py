@@ -284,6 +284,36 @@ class ReasoningGymDataManager(LocalMemoryTextDataManager):
         world_state = current_state.get_latest_state()
         return world_state
 
+    def prepare_actions(
+        self, outputs: Any, index_mapping: Dict[int, Tuple[Any]]
+    ) -> Dict[Any, List[List[Any]]]:
+        """
+        Maps model outputs back to the format needed by the GameState.
+        Override parent to fix structure - should return Dict[agent][batch_id] as List
+        """
+        from torch import Tensor
+        from numpy import ndarray
+        
+        if isinstance(outputs, (Tensor, ndarray)):
+            outputs = outputs.tolist()
+        
+        actions = {}
+        for idx, model_output in enumerate(outputs):
+            agent, batch_id, node_idx = index_mapping[idx]
+            
+            if agent not in actions:
+                actions[agent] = {}
+            if batch_id not in actions[agent]:
+                actions[agent][batch_id] = []
+            
+            # Ensure the list is large enough
+            while len(actions[agent][batch_id]) <= node_idx:
+                actions[agent][batch_id].append(None)
+            
+            actions[agent][batch_id][node_idx] = model_output
+        
+        return actions
+
     def transplant_trees(
         self,
         current_state: GameState,

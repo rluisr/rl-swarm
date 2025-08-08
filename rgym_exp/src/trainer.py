@@ -107,6 +107,22 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                         print("[DEBUG] Using to_dict() method")
                         data_dict = first_arg.to_dict()
                         
+                        # Log the keys and structure of the dataset
+                        print(f"[DEBUG] Dataset keys: {list(data_dict.keys())}")
+                        if data_dict:
+                            # Show first item structure
+                            for key, value in data_dict.items():
+                                if isinstance(value, list) and value:
+                                    print(f"[DEBUG] {key}: {len(value)} items, first item type: {type(value[0])}")
+                                    # Show sample values for debugging
+                                    if len(value) > 0:
+                                        if isinstance(value[0], str):
+                                            print(f"[DEBUG]   First {key}: {value[0][:100]}...")
+                                        elif isinstance(value[0], (int, float)):
+                                            print(f"[DEBUG]   First {key}: {value[0]}")
+                                elif value is not None:
+                                    print(f"[DEBUG] {key}: type={type(value)}, value={str(value)[:100]}")
+                        
                         # Check if we have questions to tokenize
                         if 'question' in data_dict:
                             questions = data_dict['question']
@@ -162,6 +178,9 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                         if len(first_arg) > 0:
                             # Check the structure of the first item
                             item = first_arg[0]
+                            print(f"[DEBUG] First item type: {type(item)}")
+                            if isinstance(item, dict):
+                                print(f"[DEBUG] First item keys: {list(item.keys())}")
                             
                             if isinstance(item, dict):
                                 # Check if we have questions to tokenize
@@ -232,14 +251,17 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                             pad_token_id = self.model.module.config.pad_token_id or 0
                     
                     # Create a batch with minimal valid input
-                    minimal_input = torch.tensor([[pad_token_id]], dtype=torch.long, device=device)
+                    # Use batch size of 2 to match expected dataset size
+                    minimal_input = torch.tensor([[pad_token_id], [pad_token_id]], dtype=torch.long, device=device)
                     args = (minimal_input,) + args[1:]
                     
                     # Add necessary kwargs to avoid cache_position errors
                     if 'cache_position' not in kwargs:
-                        kwargs['cache_position'] = torch.arange(1, device=device)
+                        kwargs['cache_position'] = torch.arange(minimal_input.shape[1], device=device)
                     if 'attention_mask' not in kwargs:
                         kwargs['attention_mask'] = torch.ones_like(minimal_input)
+                    
+                    print(f"[DEBUG] Using minimal input shape: {minimal_input.shape}")
             
             # If it's already a tensor, ensure it's on the right device
             elif isinstance(first_arg, torch.Tensor):
@@ -270,10 +292,19 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
         # Handle DataParallel wrapped models
         if isinstance(self.model, nn.DataParallel):
             print("[DEBUG] Using DataParallel module.generate")
-            return self.model.module.generate(*args, **kwargs)
+            result = self.model.module.generate(*args, **kwargs)
         else:
             print("[DEBUG] Using direct model.generate")
-            return self.model.generate(*args, **kwargs)
+            result = self.model.generate(*args, **kwargs)
+        
+        # Log the output shape and type
+        print(f"[DEBUG] Generate output type: {type(result)}")
+        if hasattr(result, 'shape'):
+            print(f"[DEBUG] Generate output shape: {result.shape}")
+        elif isinstance(result, (list, tuple)):
+            print(f"[DEBUG] Generate output length: {len(result)}")
+        
+        return result
 
     @torch.no_grad()
     def evaluate(
