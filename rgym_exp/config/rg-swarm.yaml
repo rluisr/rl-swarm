@@ -8,6 +8,11 @@ training:
   num_transplant_trees: 2
   seed: 42
   fp16: false # set this line to true if your hardware supports fp16
+  # Memory optimization settings
+  gradient_checkpointing: true # Enable gradient checkpointing to reduce memory usage
+  gradient_accumulation_steps: 4 # Accumulate gradients over multiple steps
+  clear_cache_every_n_rounds: 10 # Clear GPU cache periodically
+  auto_batch_size: true # Automatically adjust batch size based on available memory
 
 blockchain:
   alchemy_url: "https://gensyn-testnet.g.alchemy.com/public"
@@ -38,6 +43,7 @@ game_manager:
   hf_push_frequency: ${training.hf_push_frequency}
   run_mode: "train_and_evaluate"
   bootnodes: ${communications.initial_peers}
+  clear_cache_every_n_rounds: ${training.clear_cache_every_n_rounds}
   game_state: 
     _target_: genrl.state.game_state.GameState
     round: 0
@@ -67,6 +73,8 @@ game_manager:
     epsilon_high: 0.28
     num_generations: ${training.num_generations}
     judge_base_url: ${eval.judge_base_url}
+    gradient_checkpointing: ${training.gradient_checkpointing}
+    gradient_accumulation_steps: ${training.gradient_accumulation_steps}
   data_manager:
     _target_: rgym_exp.src.data.ReasoningGymDataManager
     yaml_config_path: "rgym_exp/src/datasets.yaml"

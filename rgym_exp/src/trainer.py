@@ -2,6 +2,7 @@ from typing import Any, List
 
 import requests
 import torch
+import torch.nn as nn
 import torch.utils.data
 from genrl.data import DataManager
 from genrl.logging_utils.global_defs import get_logger
@@ -28,6 +29,27 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
         """
         super().__init__(models, **kwargs)
         self.judge_base_url = kwargs.get("judge_base_url", None)
+        
+        # Multi-GPU support
+        self.device_count = torch.cuda.device_count()
+        if self.device_count > 1:
+            get_logger().info(f"Multiple GPUs detected: {self.device_count}")
+            # Wrap model with DataParallel for multi-GPU support
+            if hasattr(self, 'model') and self.model is not None:
+                if not isinstance(self.model, nn.DataParallel):
+                    self.model = nn.DataParallel(self.model)
+                    get_logger().info(f"Model wrapped with DataParallel across {self.device_count} GPUs")
+        
+        # Memory optimization settings
+        self.gradient_checkpointing = kwargs.get("gradient_checkpointing", False)
+        self.gradient_accumulation_steps = kwargs.get("gradient_accumulation_steps", 1)
+        
+        # Enable gradient checkpointing if specified
+        if self.gradient_checkpointing and hasattr(self, 'model'):
+            base_model = self.model.module if isinstance(self.model, nn.DataParallel) else self.model
+            if hasattr(base_model, 'gradient_checkpointing_enable'):
+                base_model.gradient_checkpointing_enable()
+                get_logger().info("Gradient checkpointing enabled for memory optimization")
 
     @torch.no_grad()
     def evaluate(
@@ -36,7 +58,11 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
         base_url = self.judge_base_url
         if base_url:
             try:
-                model_name = self.model.name_or_path
+                # Handle DataParallel wrapped models
+                if isinstance(self.model, nn.DataParallel):
+                    model_name = self.model.module.name_or_path
+                else:
+                    model_name = self.model.name_or_path
             except AttributeError:
                 model_name = "none"
 

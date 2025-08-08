@@ -17,6 +17,7 @@ from genrl.roles import RoleManager
 from genrl.state import GameState
 from genrl.trainer import TrainerModule
 from huggingface_hub import login, whoami
+import torch.nn as nn
 
 from rgym_exp.src.utils.name_utils import get_name_from_peer_id
 
@@ -84,7 +85,11 @@ class SwarmGameManager(BaseGameManager, DefaultGameManagerMixin):
         self.hf_token = hf_token
         if self.hf_token not in [None, "None"]:
             username = whoami(token=self.hf_token)["name"]
-            model_name = self.trainer.model.config.name_or_path.split("/")[-1]
+            # Handle DataParallel wrapped models
+            if isinstance(self.trainer.model, nn.DataParallel):
+                model_name = self.trainer.model.module.config.name_or_path.split("/")[-1]
+            else:
+                model_name = self.trainer.model.config.name_or_path.split("/")[-1]
             model_name += "-Gensyn-Swarm"
             model_name += f"-{self.animal_name}"
             self.trainer.args.hub_model_id = f"{username}/{model_name}"
@@ -99,7 +104,12 @@ class SwarmGameManager(BaseGameManager, DefaultGameManagerMixin):
             f"🐱 Hello 🐈 [{get_name_from_peer_id(self.peer_id)}] 🦮 [{self.peer_id}]!"
         )
         get_logger().info(f"bootnodes: {kwargs.get('bootnodes', [])}")
-        get_logger().info(f"Using Model: {self.trainer.model.config.name_or_path}")
+        # Get model name handling DataParallel
+        if isinstance(self.trainer.model, nn.DataParallel):
+            model_path = self.trainer.model.module.config.name_or_path
+        else:
+            model_path = self.trainer.model.config.name_or_path
+        get_logger().info(f"Using Model: {model_path}")
 
         with open(os.path.join(log_dir, f"system_info.txt"), "w") as f:
             f.write(get_system_info())
@@ -108,6 +118,36 @@ class SwarmGameManager(BaseGameManager, DefaultGameManagerMixin):
         self.time_since_submit = time.time() #seconds
         self.submit_period = 3.0 #hours
         self.submitted_this_round = False
+        
+        # Memory optimization settings
+        self.clear_cache_every_n_rounds = kwargs.get('clear_cache_every_n_rounds', 10)
+
+    def _clear_gpu_cache_if_needed(self):
+        """Clear GPU cache periodically to prevent memory fragmentation."""
+        clear_cache_rounds = getattr(self, 'clear_cache_every_n_rounds', 10)
+        if self.state.round % clear_cache_rounds == 0:
+            from rgym_exp.src.utils.omega_gpu_resolver import clear_gpu_cache, get_gpu_info
+            
+            # Log GPU status before clearing
+            gpu_info = get_gpu_info()
+            if gpu_info["available"]:
+                for device in gpu_info["devices"]:
+                    get_logger().info(
+                        f"GPU {device['index']}: {device['free_memory_gb']:.2f}GB free "
+                        f"/ {device['total_memory_gb']:.2f}GB total"
+                    )
+            
+            # Clear cache
+            if clear_gpu_cache():
+                get_logger().info("GPU cache cleared successfully")
+                
+                # Log GPU status after clearing
+                gpu_info = get_gpu_info()
+                if gpu_info["available"]:
+                    for device in gpu_info["devices"]:
+                        get_logger().info(
+                            f"GPU {device['index']} after clear: {device['free_memory_gb']:.2f}GB free"
+                        )
 
     def _get_total_rewards_by_agent(self):
         rewards_by_agent = defaultdict(int)
@@ -176,6 +216,9 @@ class SwarmGameManager(BaseGameManager, DefaultGameManagerMixin):
         
         # Reset flag for next round
         self.submitted_this_round = False
+        
+        # Clear GPU cache periodically to prevent memory issues
+        self._clear_gpu_cache_if_needed()
 
         # Block until swarm round advances
         self.agent_block()
