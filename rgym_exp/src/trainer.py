@@ -11,6 +11,7 @@ from genrl.rewards import RewardManager
 from genrl.state import GameState
 from genrl.trainer.grpo_trainer import GRPOLanguageTrainerModule
 from reasoning_gym.utils import SYSTEM_PROMPTS
+from transformers import AutoTokenizer
 
 
 class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
@@ -29,6 +30,27 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
         """
         super().__init__(models, **kwargs)
         self.judge_base_url = kwargs.get("judge_base_url", None)
+        
+        # Initialize processing_class (tokenizer) if not already set
+        if not hasattr(self, 'processing_class') or self.processing_class is None:
+            try:
+                # Get model name for tokenizer
+                if hasattr(self, 'model') and self.model is not None:
+                    if hasattr(self.model, 'name_or_path'):
+                        model_name = self.model.name_or_path
+                    elif hasattr(self.model, 'config') and hasattr(self.model.config, '_name_or_path'):
+                        model_name = self.model.config._name_or_path
+                    else:
+                        model_name = "Gensyn/Qwen2.5-0.5B-Instruct"  # Default fallback
+                else:
+                    model_name = "Gensyn/Qwen2.5-0.5B-Instruct"  # Default fallback
+                
+                # Initialize tokenizer
+                self.processing_class = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+                get_logger().info(f"Initialized tokenizer for model: {model_name}")
+            except Exception as e:
+                get_logger().warning(f"Failed to initialize tokenizer: {e}")
+                self.processing_class = None
         
         # Multi-GPU support
         self.device_count = torch.cuda.device_count()
@@ -90,6 +112,14 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                             questions = data_dict['question']
                             print(f"[DEBUG] Found {len(questions)} questions")
                             
+                            # Check if processing_class is available
+                            if not hasattr(self, 'processing_class'):
+                                print("[DEBUG] processing_class attribute not found")
+                            elif self.processing_class is None:
+                                print("[DEBUG] processing_class is None")
+                            else:
+                                print(f"[DEBUG] processing_class available: {type(self.processing_class)}")
+                            
                             # Process each question with chat template
                             all_input_ids = []
                             for question in questions:
@@ -100,13 +130,17 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                                 
                                 # Tokenize using processing_class if available
                                 if hasattr(self, 'processing_class') and self.processing_class is not None:
-                                    tokenized = self.processing_class.apply_chat_template(
-                                        prompt,
-                                        tokenize=True,
-                                        add_generation_prompt=True,
-                                        return_tensors="pt",
-                                    )
-                                    all_input_ids.append(tokenized)
+                                    try:
+                                        tokenized = self.processing_class.apply_chat_template(
+                                            prompt,
+                                            tokenize=True,
+                                            add_generation_prompt=True,
+                                            return_tensors="pt",
+                                        )
+                                        all_input_ids.append(tokenized)
+                                    except Exception as e:
+                                        print(f"[DEBUG] Tokenization failed: {e}")
+                                        break
                                 else:
                                     print("[DEBUG] No processing_class available for tokenization")
                                     break
@@ -143,13 +177,17 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                                         ]
                                         
                                         if hasattr(self, 'processing_class') and self.processing_class is not None:
-                                            tokenized = self.processing_class.apply_chat_template(
-                                                prompt,
-                                                tokenize=True,
-                                                add_generation_prompt=True,
-                                                return_tensors="pt",
-                                            )
-                                            all_input_ids.append(tokenized)
+                                            try:
+                                                tokenized = self.processing_class.apply_chat_template(
+                                                    prompt,
+                                                    tokenize=True,
+                                                    add_generation_prompt=True,
+                                                    return_tensors="pt",
+                                                )
+                                                all_input_ids.append(tokenized)
+                                            except Exception as e:
+                                                print(f"[DEBUG] Tokenization failed for item {i}: {e}")
+                                                break
                                     
                                     if all_input_ids:
                                         input_ids = torch.cat(all_input_ids, dim=0)
