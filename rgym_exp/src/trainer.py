@@ -179,12 +179,29 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                     args = (input_ids,) + args[1:]
                 else:
                     print("[DEBUG] Could not extract or tokenize input_ids from Dataset")
-                    # Try to pass empty tensor to avoid crash
+                    # Create a minimal valid input_ids to avoid crash
                     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
                     if isinstance(self.model, nn.DataParallel):
                         device = next(self.model.module.parameters()).device
-                    empty_tensor = torch.tensor([[]], dtype=torch.long, device=device)
-                    args = (empty_tensor,) + args[1:]
+                    
+                    # Create a minimal valid input with padding token
+                    # Use a padding token ID (typically 0 or model's pad_token_id)
+                    pad_token_id = 0
+                    if hasattr(self.model, 'config') and hasattr(self.model.config, 'pad_token_id'):
+                        pad_token_id = self.model.config.pad_token_id or 0
+                    elif isinstance(self.model, nn.DataParallel):
+                        if hasattr(self.model.module, 'config') and hasattr(self.model.module.config, 'pad_token_id'):
+                            pad_token_id = self.model.module.config.pad_token_id or 0
+                    
+                    # Create a batch with minimal valid input
+                    minimal_input = torch.tensor([[pad_token_id]], dtype=torch.long, device=device)
+                    args = (minimal_input,) + args[1:]
+                    
+                    # Add necessary kwargs to avoid cache_position errors
+                    if 'cache_position' not in kwargs:
+                        kwargs['cache_position'] = torch.arange(1, device=device)
+                    if 'attention_mask' not in kwargs:
+                        kwargs['attention_mask'] = torch.ones_like(minimal_input)
             
             # If it's already a tensor, ensure it's on the right device
             elif isinstance(first_arg, torch.Tensor):
