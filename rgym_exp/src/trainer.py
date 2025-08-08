@@ -52,114 +52,173 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                 get_logger().info("Gradient checkpointing enabled for memory optimization")
 
     def generate(self, *args, **kwargs):
-        """
-        Generate method that handles DataParallel wrapped models.
+    """
+    Generate method that handles DataParallel wrapped models.
+    
+    Args:
+        *args: Positional arguments to pass to the model's generate method
+        **kwargs: Keyword arguments to pass to the model's generate method
         
-        Args:
-            *args: Positional arguments to pass to the model's generate method
-            **kwargs: Keyword arguments to pass to the model's generate method
+    Returns:
+        The output from the model's generate method
+    """
+    # Debug logging to understand what's being passed
+    if args:
+        print(f"[DEBUG] First arg type: {type(args[0])}")
+        if hasattr(args[0], '__class__'):
+            print(f"[DEBUG] First arg class name: {args[0].__class__.__name__}")
+        
+    # Handle Dataset objects passed as first argument
+    if args:
+        first_arg = args[0]
+        
+        # Check if it's a Dataset object by class name
+        if hasattr(first_arg, '__class__') and 'Dataset' in first_arg.__class__.__name__:
+            print(f"[DEBUG] Detected Dataset object")
             
-        Returns:
-            The output from the model's generate method
-        """
-        # Debug logging to understand what's being passed
-        if args:
-            print(f"[DEBUG] First arg type: {type(args[0])}")
-            if hasattr(args[0], '__class__'):
-                print(f"[DEBUG] First arg class name: {args[0].__class__.__name__}")
+            # Try to extract and tokenize the questions from the Dataset
+            input_ids = None
             
-        # Handle Dataset objects passed as first argument
-        if args:
-            first_arg = args[0]
-            
-            # Check if it's a Dataset object by class name
-            if hasattr(first_arg, '__class__') and 'Dataset' in first_arg.__class__.__name__:
-                print(f"[DEBUG] Detected Dataset object")
-                
-                # Try various methods to extract input_ids
-                input_ids = None
-                
-                # Method 1: Direct attribute access
-                if hasattr(first_arg, 'input_ids'):
-                    print("[DEBUG] Using direct attribute access")
-                    input_ids = first_arg.input_ids
-                
-                # Method 2: to_dict() method
-                elif hasattr(first_arg, 'to_dict'):
+            try:
+                # Method 1: Try to_dict() to get the data
+                if hasattr(first_arg, 'to_dict'):
                     print("[DEBUG] Using to_dict() method")
-                    try:
-                        data_dict = first_arg.to_dict()
-                        if 'input_ids' in data_dict:
-                            input_ids = data_dict['input_ids']
-                    except Exception as e:
-                        print(f"[DEBUG] to_dict() failed: {e}")
-                
-                # Method 3: __getitem__ access
+                    data_dict = first_arg.to_dict()
+                    
+                    # Check if we have questions to tokenize
+                    if 'question' in data_dict:
+                        questions = data_dict['question']
+                        print(f"[DEBUG] Found {len(questions)} questions")
+                        
+                        # Process each question with chat template
+                        all_input_ids = []
+                        for question in questions:
+                            prompt = [
+                                {"role": "system", "content": SYSTEM_PROMPTS.get("default", "")},
+                                {"role": "user", "content": question},
+                            ]
+                            
+                            # Tokenize using processing_class if available
+                            if hasattr(self, 'processing_class') and self.processing_class is not None:
+                                tokenized = self.processing_class.apply_chat_template(
+                                    prompt,
+                                    tokenize=True,
+                                    add_generation_prompt=True,
+                                    return_tensors="pt",
+                                )
+                                all_input_ids.append(tokenized)
+                            else:
+                                print("[DEBUG] No processing_class available for tokenization")
+                                break
+                        
+                        # Concatenate all input_ids if we have them
+                        if all_input_ids:
+                            input_ids = torch.cat(all_input_ids, dim=0)
+                            print(f"[DEBUG] Tokenized input_ids shape: {input_ids.shape}")
+                    
+                    # Fallback: Check if input_ids already exists
+                    elif 'input_ids' in data_dict:
+                        input_ids = data_dict['input_ids']
+                        if not isinstance(input_ids, torch.Tensor):
+                            input_ids = torch.tensor(input_ids)
+                            
+                # Method 2: Try __getitem__ access for batch processing
                 elif hasattr(first_arg, '__getitem__') and hasattr(first_arg, '__len__'):
                     print("[DEBUG] Using __getitem__ method")
-                    try:
-                        if len(first_arg) > 0:
-                            item = first_arg[0]
-                            if isinstance(item, dict) and 'input_ids' in item:
+                    if len(first_arg) > 0:
+                        # Check the structure of the first item
+                        item = first_arg[0]
+                        
+                        if isinstance(item, dict):
+                            # Check if we have questions to tokenize
+                            if 'question' in item:
+                                all_input_ids = []
+                                for i in range(len(first_arg)):
+                                    item = first_arg[i]
+                                    question = item.get('question', '')
+                                    
+                                    prompt = [
+                                        {"role": "system", "content": SYSTEM_PROMPTS.get("default", "")},
+                                        {"role": "user", "content": question},
+                                    ]
+                                    
+                                    if hasattr(self, 'processing_class') and self.processing_class is not None:
+                                        tokenized = self.processing_class.apply_chat_template(
+                                            prompt,
+                                            tokenize=True,
+                                            add_generation_prompt=True,
+                                            return_tensors="pt",
+                                        )
+                                        all_input_ids.append(tokenized)
+                                
+                                if all_input_ids:
+                                    input_ids = torch.cat(all_input_ids, dim=0)
+                                    print(f"[DEBUG] Tokenized input_ids shape: {input_ids.shape}")
+                            
+                            # Fallback: Check if input_ids already exists
+                            elif 'input_ids' in item:
                                 input_ids = item['input_ids']
-                            elif hasattr(item, 'input_ids'):
-                                input_ids = item.input_ids
-                    except Exception as e:
-                        print(f"[DEBUG] __getitem__ failed: {e}")
+                                if not isinstance(input_ids, torch.Tensor):
+                                    input_ids = torch.tensor(input_ids)
                 
-                # Method 4: Try to access as a dictionary directly
-                if input_ids is None:
-                    try:
-                        if 'input_ids' in first_arg:
-                            print("[DEBUG] Using dictionary access")
-                            input_ids = first_arg['input_ids']
-                    except:
-                        pass
-                
-                # Convert to tensor if we found input_ids
-                if input_ids is not None:
-                    if not isinstance(input_ids, torch.Tensor):
-                        print(f"[DEBUG] Converting to tensor from type: {type(input_ids)}")
-                        try:
-                            input_ids = torch.tensor(input_ids)
-                        except Exception as e:
-                            print(f"[DEBUG] Tensor conversion failed: {e}")
-                            # Try to convert to list first, then to tensor
-                            try:
-                                if hasattr(input_ids, 'tolist'):
-                                    input_ids = torch.tensor(input_ids.tolist())
-                                else:
-                                    input_ids = torch.tensor(list(input_ids))
-                            except Exception as e2:
-                                print(f"[DEBUG] Alternative tensor conversion failed: {e2}")
-                    
-                    # Replace the first argument
-                    if input_ids is not None:
-                        print(f"[DEBUG] Successfully processed input_ids, shape: {input_ids.shape if hasattr(input_ids, 'shape') else 'unknown'}")
-                        args = (input_ids,) + args[1:]
+            except Exception as e:
+                print(f"[DEBUG] Dataset processing failed: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            # Move tensor to correct device if we have it
+            if input_ids is not None and isinstance(input_ids, torch.Tensor):
+                # Get the device from the model
+                if isinstance(self.model, nn.DataParallel):
+                    device = next(self.model.module.parameters()).device
                 else:
-                    print("[DEBUG] Could not extract input_ids from Dataset")
-            
-            # If it's already a tensor, pass through
-            elif isinstance(first_arg, torch.Tensor):
-                print(f"[DEBUG] First arg is already a tensor")
-            
-            # Otherwise, try to convert to tensor
-            elif not isinstance(first_arg, torch.Tensor):
-                print(f"[DEBUG] Attempting to convert {type(first_arg)} to tensor")
-                try:
-                    tensor_arg = torch.tensor(first_arg)
-                    args = (tensor_arg,) + args[1:]
-                except Exception as e:
-                    print(f"[DEBUG] Tensor conversion failed: {e}, passing through as-is")
+                    device = next(self.model.parameters()).device if hasattr(self.model, 'parameters') else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                
+                input_ids = input_ids.to(device)
+                print(f"[DEBUG] Successfully processed input_ids, shape: {input_ids.shape}, device: {input_ids.device}")
+                args = (input_ids,) + args[1:]
+            else:
+                print("[DEBUG] Could not extract or tokenize input_ids from Dataset")
+                # Try to pass empty tensor to avoid crash
+                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                if isinstance(self.model, nn.DataParallel):
+                    device = next(self.model.module.parameters()).device
+                empty_tensor = torch.tensor([[]], dtype=torch.long, device=device)
+                args = (empty_tensor,) + args[1:]
         
-        # Handle DataParallel wrapped models
-        if isinstance(self.model, nn.DataParallel):
-            print("[DEBUG] Using DataParallel module.generate")
-            return self.model.module.generate(*args, **kwargs)
-        else:
-            print("[DEBUG] Using direct model.generate")
-            return self.model.generate(*args, **kwargs)
+        # If it's already a tensor, ensure it's on the right device
+        elif isinstance(first_arg, torch.Tensor):
+            print(f"[DEBUG] First arg is already a tensor")
+            if isinstance(self.model, nn.DataParallel):
+                device = next(self.model.module.parameters()).device
+            else:
+                device = next(self.model.parameters()).device if hasattr(self.model, 'parameters') else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            
+            if first_arg.device != device:
+                first_arg = first_arg.to(device)
+                args = (first_arg,) + args[1:]
+        
+        # Otherwise, try to convert to tensor
+        elif not isinstance(first_arg, torch.Tensor):
+            print(f"[DEBUG] Attempting to convert {type(first_arg)} to tensor")
+            try:
+                tensor_arg = torch.tensor(first_arg)
+                if isinstance(self.model, nn.DataParallel):
+                    device = next(self.model.module.parameters()).device
+                else:
+                    device = next(self.model.parameters()).device if hasattr(self.model, 'parameters') else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                tensor_arg = tensor_arg.to(device)
+                args = (tensor_arg,) + args[1:]
+            except Exception as e:
+                print(f"[DEBUG] Tensor conversion failed: {e}, passing through as-is")
+    
+    # Handle DataParallel wrapped models
+    if isinstance(self.model, nn.DataParallel):
+        print("[DEBUG] Using DataParallel module.generate")
+        return self.model.module.generate(*args, **kwargs)
+    else:
+        print("[DEBUG] Using direct model.generate")
+        return self.model.generate(*args, **kwargs)
 
     @torch.no_grad()
     def evaluate(
