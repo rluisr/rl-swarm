@@ -30,11 +30,15 @@ class RGRewards:
             for batch_id in completions[agent]:
                 rewards[agent][batch_id] = []
                 for node_idx, _ in enumerate(completions[agent][batch_id]):
-                    rewards[agent][batch_id].append(
-                        self.reward_fn(
-                            completions[agent][batch_id][node_idx],
-                            answers[agent][batch_id][node_idx],
-                            metadata[agent][batch_id][node_idx],
-                        )
+                    reward_list = self.reward_fn(
+                        completions[agent][batch_id][node_idx],
+                        answers[agent][batch_id][node_idx],
+                        metadata[agent][batch_id][node_idx],
                     )
+                    # Extract single reward value from list
+                    # reward_fn returns a list, but we need a single value per node
+                    if isinstance(reward_list, list) and len(reward_list) > 0:
+                        rewards[agent][batch_id].append(reward_list[0])
+                    else:
+                        rewards[agent][batch_id].append(0.0)
         return rewards
