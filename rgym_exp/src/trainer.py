@@ -73,6 +73,16 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                 base_model.gradient_checkpointing_enable()
                 get_logger().info("Gradient checkpointing enabled for memory optimization")
 
+    @property
+    def device(self):
+        """Get the device of the model, handling DataParallel wrapped models."""
+        if isinstance(self.model, nn.DataParallel):
+            return next(self.model.module.parameters()).device
+        elif hasattr(self.model, 'device'):
+            return self.model.device
+        else:
+            return next(self.model.parameters()).device if hasattr(self.model, 'parameters') else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     def generate(self, *args, **kwargs):
         """
         Generate method that handles DataParallel wrapped models.
@@ -143,6 +153,7 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                             
                             # Process each question with chat template
                             all_input_ids = []
+                            max_length = 0
                             for question in questions:
                                 prompt = [
                                     {"role": "system", "content": SYSTEM_PROMPTS.get("default", "")},
@@ -159,6 +170,7 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                                             return_tensors="pt",
                                         )
                                         all_input_ids.append(tokenized)
+                                        max_length = max(max_length, tokenized.shape[1])
                                     except Exception as e:
                                         print(f"[DEBUG] Tokenization failed: {e}")
                                         break
@@ -166,9 +178,25 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                                     print("[DEBUG] No processing_class available for tokenization")
                                     break
                             
-                            # Concatenate all input_ids if we have them
+                            # Pad and concatenate all input_ids if we have them
                             if all_input_ids:
-                                input_ids = torch.cat(all_input_ids, dim=0)
+                                # Pad all tensors to the same length
+                                padded_input_ids = []
+                                pad_token_id = self.processing_class.pad_token_id or 0
+                                for tensor in all_input_ids:
+                                    if tensor.shape[1] < max_length:
+                                        padding = torch.full(
+                                            (tensor.shape[0], max_length - tensor.shape[1]),
+                                            pad_token_id,
+                                            dtype=tensor.dtype,
+                                            device=tensor.device
+                                        )
+                                        padded_tensor = torch.cat([tensor, padding], dim=1)
+                                    else:
+                                        padded_tensor = tensor
+                                    padded_input_ids.append(padded_tensor)
+                                
+                                input_ids = torch.cat(padded_input_ids, dim=0)
                                 print(f"[DEBUG] Tokenized input_ids shape: {input_ids.shape}")
                         
                         # Fallback: Check if input_ids already exists
@@ -191,6 +219,7 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                                 # Check if we have user_prompt or question to tokenize
                                 if 'user_prompt' in item:
                                     all_input_ids = []
+                                    max_length = 0
                                     for i in range(len(first_arg)):
                                         item = first_arg[i]
                                         question = item.get('user_prompt', '')
@@ -209,12 +238,29 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                                                     return_tensors="pt",
                                                 )
                                                 all_input_ids.append(tokenized)
+                                                max_length = max(max_length, tokenized.shape[1])
                                             except Exception as e:
                                                 print(f"[DEBUG] Tokenization failed for item {i}: {e}")
                                                 break
                                     
                                     if all_input_ids:
-                                        input_ids = torch.cat(all_input_ids, dim=0)
+                                        # Pad all tensors to the same length
+                                        padded_input_ids = []
+                                        pad_token_id = self.processing_class.pad_token_id or 0
+                                        for tensor in all_input_ids:
+                                            if tensor.shape[1] < max_length:
+                                                padding = torch.full(
+                                                    (tensor.shape[0], max_length - tensor.shape[1]),
+                                                    pad_token_id,
+                                                    dtype=tensor.dtype,
+                                                    device=tensor.device
+                                                )
+                                                padded_tensor = torch.cat([tensor, padding], dim=1)
+                                            else:
+                                                padded_tensor = tensor
+                                            padded_input_ids.append(padded_tensor)
+                                        
+                                        input_ids = torch.cat(padded_input_ids, dim=0)
                                         print(f"[DEBUG] Tokenized input_ids shape: {input_ids.shape}")
                                 
                                 elif 'question' in item:
@@ -383,7 +429,7 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                     add_generation_prompt=True,
                     return_tensors="pt",
                 )
-                input_ids = input_ids.to(self.model.device)
+                input_ids = input_ids.to(self.device)
                 outputs = self.model.generate(input_ids, max_new_tokens=512)
                 answer = self.processing_class.decode(
                     outputs[0], skip_special_tokens=True
