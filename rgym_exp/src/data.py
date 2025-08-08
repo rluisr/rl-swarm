@@ -290,11 +290,47 @@ class ReasoningGymDataManager(LocalMemoryTextDataManager):
         """
         Maps model outputs back to the format needed by the GameState.
         Override parent to fix structure - should return Dict[agent][batch_id] as List
+        Also decode tensor outputs to text
         """
         from torch import Tensor
         from numpy import ndarray
         
-        if isinstance(outputs, (Tensor, ndarray)):
+        # Get the tokenizer/processor for decoding
+        # Try to get tokenizer from various sources
+        tokenizer = None
+        
+        # Check if we have access to trainer through game manager
+        if hasattr(self, 'trainer') and hasattr(self.trainer, 'processing_class'):
+            tokenizer = self.trainer.processing_class
+        # Check if data manager has processing_class directly
+        elif hasattr(self, 'processing_class'):
+            tokenizer = self.processing_class
+        # Try to import and use AutoTokenizer as fallback
+        else:
+            try:
+                from transformers import AutoTokenizer
+                # Use the same model name as in trainer.py
+                tokenizer = AutoTokenizer.from_pretrained("Gensyn/Qwen2.5-0.5B-Instruct", trust_remote_code=True)
+                get_logger().debug("Using fallback tokenizer for decoding")
+            except Exception as e:
+                get_logger().debug(f"Could not initialize fallback tokenizer: {e}")
+        
+        # Decode tensor outputs to text if we have a tokenizer
+        if tokenizer is not None and isinstance(outputs, Tensor):
+            try:
+                # Decode each sequence in the batch
+                decoded_outputs = []
+                for seq_ids in outputs:
+                    decoded_text = tokenizer.decode(seq_ids, skip_special_tokens=True)
+                    decoded_outputs.append(decoded_text)
+                outputs = decoded_outputs
+                get_logger().debug(f"Decoded {len(decoded_outputs)} outputs from tensor")
+            except Exception as e:
+                get_logger().warning(f"Failed to decode outputs: {e}")
+                # Fallback to tolist
+                if isinstance(outputs, (Tensor, ndarray)):
+                    outputs = outputs.tolist()
+        elif isinstance(outputs, (Tensor, ndarray)):
             outputs = outputs.tolist()
         
         actions = {}

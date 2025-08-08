@@ -123,11 +123,16 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                                 elif value is not None:
                                     print(f"[DEBUG] {key}: type={type(value)}, value={str(value)[:100]}")
                         
-                        # Check if we have questions to tokenize
-                        if 'question' in data_dict:
+                        # Check if we have user_prompt or question to tokenize
+                        questions = None
+                        if 'user_prompt' in data_dict:
+                            questions = data_dict['user_prompt']
+                            print(f"[DEBUG] Found {len(questions)} user_prompts")
+                        elif 'question' in data_dict:
                             questions = data_dict['question']
                             print(f"[DEBUG] Found {len(questions)} questions")
-                            
+                        
+                        if questions is not None:
                             # Check if processing_class is available
                             if not hasattr(self, 'processing_class'):
                                 print("[DEBUG] processing_class attribute not found")
@@ -183,8 +188,36 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                                 print(f"[DEBUG] First item keys: {list(item.keys())}")
                             
                             if isinstance(item, dict):
-                                # Check if we have questions to tokenize
-                                if 'question' in item:
+                                # Check if we have user_prompt or question to tokenize
+                                if 'user_prompt' in item:
+                                    all_input_ids = []
+                                    for i in range(len(first_arg)):
+                                        item = first_arg[i]
+                                        question = item.get('user_prompt', '')
+                                        
+                                        prompt = [
+                                            {"role": "system", "content": SYSTEM_PROMPTS.get("default", "")},
+                                            {"role": "user", "content": question},
+                                        ]
+                                        
+                                        if hasattr(self, 'processing_class') and self.processing_class is not None:
+                                            try:
+                                                tokenized = self.processing_class.apply_chat_template(
+                                                    prompt,
+                                                    tokenize=True,
+                                                    add_generation_prompt=True,
+                                                    return_tensors="pt",
+                                                )
+                                                all_input_ids.append(tokenized)
+                                            except Exception as e:
+                                                print(f"[DEBUG] Tokenization failed for item {i}: {e}")
+                                                break
+                                    
+                                    if all_input_ids:
+                                        input_ids = torch.cat(all_input_ids, dim=0)
+                                        print(f"[DEBUG] Tokenized input_ids shape: {input_ids.shape}")
+                                
+                                elif 'question' in item:
                                     all_input_ids = []
                                     for i in range(len(first_arg)):
                                         item = first_arg[i]
