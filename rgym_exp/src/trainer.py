@@ -62,53 +62,103 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
         Returns:
             The output from the model's generate method
         """
+        # Debug logging to understand what's being passed
+        if args:
+            print(f"[DEBUG] First arg type: {type(args[0])}")
+            if hasattr(args[0], '__class__'):
+                print(f"[DEBUG] First arg class name: {args[0].__class__.__name__}")
+            
         # Handle Dataset objects passed as first argument
-        if args and hasattr(args[0], '__iter__') and not isinstance(args[0], torch.Tensor):
-            # If first argument is a Dataset or similar iterable (not a tensor)
-            dataset = args[0]
+        if args:
+            first_arg = args[0]
             
-            # Extract input_ids from the dataset
-            if hasattr(dataset, 'input_ids'):
-                # Direct attribute access
-                input_ids = dataset.input_ids
-            elif hasattr(dataset, '__getitem__'):
-                # Try to get the first item and extract input_ids
-                try:
-                    first_item = dataset[0] if len(dataset) > 0 else dataset
-                    if isinstance(first_item, dict) and 'input_ids' in first_item:
-                        input_ids = first_item['input_ids']
-                    elif hasattr(first_item, 'input_ids'):
-                        input_ids = first_item.input_ids
-                    else:
-                        # Fallback: try to convert dataset to tensor directly
-                        input_ids = dataset
-                except:
-                    # Last resort: pass through as is
-                    input_ids = dataset
-            else:
-                input_ids = dataset
-            
-            # Ensure it's a tensor
-            if not isinstance(input_ids, torch.Tensor):
-                try:
-                    input_ids = torch.tensor(input_ids)
-                except:
-                    # If conversion fails, try to extract from the dataset in other ways
-                    if hasattr(dataset, 'to_dict'):
-                        data_dict = dataset.to_dict()
+            # Check if it's a Dataset object by class name
+            if hasattr(first_arg, '__class__') and 'Dataset' in first_arg.__class__.__name__:
+                print(f"[DEBUG] Detected Dataset object")
+                
+                # Try various methods to extract input_ids
+                input_ids = None
+                
+                # Method 1: Direct attribute access
+                if hasattr(first_arg, 'input_ids'):
+                    print("[DEBUG] Using direct attribute access")
+                    input_ids = first_arg.input_ids
+                
+                # Method 2: to_dict() method
+                elif hasattr(first_arg, 'to_dict'):
+                    print("[DEBUG] Using to_dict() method")
+                    try:
+                        data_dict = first_arg.to_dict()
                         if 'input_ids' in data_dict:
-                            input_ids = torch.tensor(data_dict['input_ids'])
-                    else:
-                        # Pass through as is and let the model handle it
-                        input_ids = dataset
+                            input_ids = data_dict['input_ids']
+                    except Exception as e:
+                        print(f"[DEBUG] to_dict() failed: {e}")
+                
+                # Method 3: __getitem__ access
+                elif hasattr(first_arg, '__getitem__') and hasattr(first_arg, '__len__'):
+                    print("[DEBUG] Using __getitem__ method")
+                    try:
+                        if len(first_arg) > 0:
+                            item = first_arg[0]
+                            if isinstance(item, dict) and 'input_ids' in item:
+                                input_ids = item['input_ids']
+                            elif hasattr(item, 'input_ids'):
+                                input_ids = item.input_ids
+                    except Exception as e:
+                        print(f"[DEBUG] __getitem__ failed: {e}")
+                
+                # Method 4: Try to access as a dictionary directly
+                if input_ids is None:
+                    try:
+                        if 'input_ids' in first_arg:
+                            print("[DEBUG] Using dictionary access")
+                            input_ids = first_arg['input_ids']
+                    except:
+                        pass
+                
+                # Convert to tensor if we found input_ids
+                if input_ids is not None:
+                    if not isinstance(input_ids, torch.Tensor):
+                        print(f"[DEBUG] Converting to tensor from type: {type(input_ids)}")
+                        try:
+                            input_ids = torch.tensor(input_ids)
+                        except Exception as e:
+                            print(f"[DEBUG] Tensor conversion failed: {e}")
+                            # Try to convert to list first, then to tensor
+                            try:
+                                if hasattr(input_ids, 'tolist'):
+                                    input_ids = torch.tensor(input_ids.tolist())
+                                else:
+                                    input_ids = torch.tensor(list(input_ids))
+                            except Exception as e2:
+                                print(f"[DEBUG] Alternative tensor conversion failed: {e2}")
+                    
+                    # Replace the first argument
+                    if input_ids is not None:
+                        print(f"[DEBUG] Successfully processed input_ids, shape: {input_ids.shape if hasattr(input_ids, 'shape') else 'unknown'}")
+                        args = (input_ids,) + args[1:]
+                else:
+                    print("[DEBUG] Could not extract input_ids from Dataset")
             
-            # Replace the first argument with the processed input_ids
-            args = (input_ids,) + args[1:]
+            # If it's already a tensor, pass through
+            elif isinstance(first_arg, torch.Tensor):
+                print(f"[DEBUG] First arg is already a tensor")
+            
+            # Otherwise, try to convert to tensor
+            elif not isinstance(first_arg, torch.Tensor):
+                print(f"[DEBUG] Attempting to convert {type(first_arg)} to tensor")
+                try:
+                    tensor_arg = torch.tensor(first_arg)
+                    args = (tensor_arg,) + args[1:]
+                except Exception as e:
+                    print(f"[DEBUG] Tensor conversion failed: {e}, passing through as-is")
         
         # Handle DataParallel wrapped models
         if isinstance(self.model, nn.DataParallel):
+            print("[DEBUG] Using DataParallel module.generate")
             return self.model.module.generate(*args, **kwargs)
         else:
+            print("[DEBUG] Using direct model.generate")
             return self.model.generate(*args, **kwargs)
 
     @torch.no_grad()
