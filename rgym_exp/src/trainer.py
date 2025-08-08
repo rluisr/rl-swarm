@@ -62,6 +62,49 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
         Returns:
             The output from the model's generate method
         """
+        # Handle Dataset objects passed as first argument
+        if args and hasattr(args[0], '__iter__') and not isinstance(args[0], torch.Tensor):
+            # If first argument is a Dataset or similar iterable (not a tensor)
+            dataset = args[0]
+            
+            # Extract input_ids from the dataset
+            if hasattr(dataset, 'input_ids'):
+                # Direct attribute access
+                input_ids = dataset.input_ids
+            elif hasattr(dataset, '__getitem__'):
+                # Try to get the first item and extract input_ids
+                try:
+                    first_item = dataset[0] if len(dataset) > 0 else dataset
+                    if isinstance(first_item, dict) and 'input_ids' in first_item:
+                        input_ids = first_item['input_ids']
+                    elif hasattr(first_item, 'input_ids'):
+                        input_ids = first_item.input_ids
+                    else:
+                        # Fallback: try to convert dataset to tensor directly
+                        input_ids = dataset
+                except:
+                    # Last resort: pass through as is
+                    input_ids = dataset
+            else:
+                input_ids = dataset
+            
+            # Ensure it's a tensor
+            if not isinstance(input_ids, torch.Tensor):
+                try:
+                    input_ids = torch.tensor(input_ids)
+                except:
+                    # If conversion fails, try to extract from the dataset in other ways
+                    if hasattr(dataset, 'to_dict'):
+                        data_dict = dataset.to_dict()
+                        if 'input_ids' in data_dict:
+                            input_ids = torch.tensor(data_dict['input_ids'])
+                    else:
+                        # Pass through as is and let the model handle it
+                        input_ids = dataset
+            
+            # Replace the first argument with the processed input_ids
+            args = (input_ids,) + args[1:]
+        
         # Handle DataParallel wrapped models
         if isinstance(self.model, nn.DataParallel):
             return self.model.module.generate(*args, **kwargs)
