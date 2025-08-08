@@ -47,6 +47,11 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                 
                 # Initialize tokenizer
                 self.processing_class = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+                # Set padding_side to left for decoder-only models
+                self.processing_class.padding_side = 'left'
+                # Ensure pad_token is set
+                if self.processing_class.pad_token is None:
+                    self.processing_class.pad_token = self.processing_class.eos_token
                 get_logger().info(f"Initialized tokenizer for model: {model_name}")
             except Exception as e:
                 get_logger().warning(f"Failed to initialize tokenizer: {e}")
@@ -60,6 +65,8 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
             if hasattr(self, 'model') and self.model is not None:
                 if not isinstance(self.model, nn.DataParallel):
                     self.model = nn.DataParallel(self.model)
+                    # Add device attribute to DataParallel model for compatibility
+                    self.model.device = next(self.model.module.parameters()).device
                     get_logger().info(f"Model wrapped with DataParallel across {self.device_count} GPUs")
         
         # Memory optimization settings
@@ -182,22 +189,32 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                             if all_input_ids:
                                 # Pad all tensors to the same length
                                 padded_input_ids = []
+                                attention_masks = []
                                 pad_token_id = self.processing_class.pad_token_id or 0
                                 for tensor in all_input_ids:
                                     if tensor.shape[1] < max_length:
+                                        padding_length = max_length - tensor.shape[1]
                                         padding = torch.full(
-                                            (tensor.shape[0], max_length - tensor.shape[1]),
+                                            (tensor.shape[0], padding_length),
                                             pad_token_id,
                                             dtype=tensor.dtype,
                                             device=tensor.device
                                         )
-                                        padded_tensor = torch.cat([tensor, padding], dim=1)
+                                        padded_tensor = torch.cat([padding, tensor], dim=1)  # Left padding
+                                        # Create attention mask (0 for padding, 1 for real tokens)
+                                        attention_mask = torch.cat([
+                                            torch.zeros(tensor.shape[0], padding_length, dtype=torch.long, device=tensor.device),
+                                            torch.ones(tensor.shape[0], tensor.shape[1], dtype=torch.long, device=tensor.device)
+                                        ], dim=1)
                                     else:
                                         padded_tensor = tensor
+                                        attention_mask = torch.ones_like(tensor, dtype=torch.long)
                                     padded_input_ids.append(padded_tensor)
+                                    attention_masks.append(attention_mask)
                                 
                                 input_ids = torch.cat(padded_input_ids, dim=0)
-                                print(f"[DEBUG] Tokenized input_ids shape: {input_ids.shape}")
+                                attention_mask = torch.cat(attention_masks, dim=0)
+                                print(f"[DEBUG] Tokenized input_ids shape: {input_ids.shape}, attention_mask shape: {attention_mask.shape}")
                         
                         # Fallback: Check if input_ids already exists
                         elif 'input_ids' in data_dict:
@@ -246,22 +263,32 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                                     if all_input_ids:
                                         # Pad all tensors to the same length
                                         padded_input_ids = []
+                                        attention_masks = []
                                         pad_token_id = self.processing_class.pad_token_id or 0
                                         for tensor in all_input_ids:
                                             if tensor.shape[1] < max_length:
+                                                padding_length = max_length - tensor.shape[1]
                                                 padding = torch.full(
-                                                    (tensor.shape[0], max_length - tensor.shape[1]),
+                                                    (tensor.shape[0], padding_length),
                                                     pad_token_id,
                                                     dtype=tensor.dtype,
                                                     device=tensor.device
                                                 )
-                                                padded_tensor = torch.cat([tensor, padding], dim=1)
+                                                padded_tensor = torch.cat([padding, tensor], dim=1)  # Left padding
+                                                # Create attention mask (0 for padding, 1 for real tokens)
+                                                attention_mask = torch.cat([
+                                                    torch.zeros(tensor.shape[0], padding_length, dtype=torch.long, device=tensor.device),
+                                                    torch.ones(tensor.shape[0], tensor.shape[1], dtype=torch.long, device=tensor.device)
+                                                ], dim=1)
                                             else:
                                                 padded_tensor = tensor
+                                                attention_mask = torch.ones_like(tensor, dtype=torch.long)
                                             padded_input_ids.append(padded_tensor)
+                                            attention_masks.append(attention_mask)
                                         
                                         input_ids = torch.cat(padded_input_ids, dim=0)
-                                        print(f"[DEBUG] Tokenized input_ids shape: {input_ids.shape}")
+                                        attention_mask = torch.cat(attention_masks, dim=0)
+                                        print(f"[DEBUG] Tokenized input_ids shape: {input_ids.shape}, attention_mask shape: {attention_mask.shape}")
                                 
                                 elif 'question' in item:
                                     all_input_ids = []
@@ -313,6 +340,11 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                     input_ids = input_ids.to(device)
                     print(f"[DEBUG] Successfully processed input_ids, shape: {input_ids.shape}, device: {input_ids.device}")
                     args = (input_ids,) + args[1:]
+                    
+                    # Add attention_mask to kwargs if we have it
+                    if 'attention_mask' in locals() and attention_mask is not None:
+                        kwargs['attention_mask'] = attention_mask.to(device)
+                        print(f"[DEBUG] Added attention_mask to kwargs")
                 else:
                     print("[DEBUG] Could not extract or tokenize input_ids from Dataset")
                     # Create a minimal valid input_ids to avoid crash
