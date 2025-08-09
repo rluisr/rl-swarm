@@ -1,0 +1,37 @@
+--- a/genrl/trainer/grpo_trainer.py
++++ b/genrl/trainer/grpo_trainer.py
+@@ -120,6 +120,15 @@
+         if torch.cuda.device_count() > 1:
+             print(f"Using {torch.cuda.device_count()} GPUs with DataParallel")
+             self.model = nn.DataParallel(self.model)
++            # Set DataParallel to use balanced memory allocation
++            self.model.module.gradient_checkpointing_enable()
++            # Enable memory-efficient attention
++            if hasattr(self.model.module.config, 'use_memory_efficient_attention'):
++                self.model.module.config.use_memory_efficient_attention = True
++            # Set output device to balance memory
++            if torch.cuda.device_count() > 2:
++                # Use GPU 1 or 2 as output device to reduce load on GPU 0
++                self.model.output_device = 1
+         
+         # Move model to device after DataParallel wrapping
+         self.model = self.model.to(self.args.device)
+@@ -540,6 +549,19 @@
+         loss.backward()
++        
++        # Memory optimization for multi-GPU
++        if torch.cuda.device_count() > 1 and global_step % 5 == 0:
++            # Clear gradients of unused parameters
++            for param in self.model.parameters():
++                if param.grad is not None and param.grad.abs().max() < 1e-8:
++                    param.grad = None
++            
++            # Synchronize and clear cache on all devices
++            for device_id in range(torch.cuda.device_count()):
++                torch.cuda.set_device(device_id)
++                torch.cuda.synchronize()
++                torch.cuda.empty_cache()
++            torch.cuda.set_device(0)  # Reset to primary device
+         
+         if self.args.gradient_accumulation_steps > 1:
+             loss = loss / self.args.gradient_accumulation_steps

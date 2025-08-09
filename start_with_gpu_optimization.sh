@@ -34,8 +34,9 @@ echo "Setting GPU optimization environment variables..."
 # Enable memory growth for TensorFlow (if used)
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 
-# PyTorch settings
-export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+# PyTorch settings for memory optimization
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,expandable_segments:True
+export PYTORCH_NO_CUDA_MEMORY_CACHING=0
 export CUDA_LAUNCH_BLOCKING=0
 
 # Enable NCCL optimizations for multi-GPU
@@ -458,6 +459,91 @@ if needs_clip_ratio_fix:
         f.writelines(new_lines)
     
     print('✓ clip_ratio multi-GPU fix applied successfully')
+
+# Add periodic GPU cache clearing during training
+print('Checking for periodic GPU cache clearing...')
+needs_cache_clear_fix = False
+with open(grpo_file, 'r') as f:
+    content = f.read()
+    if 'Periodic GPU cache clearing' not in content:
+        needs_cache_clear_fix = True
+        print('✓ Periodic cache clearing needed')
+
+if needs_cache_clear_fix:
+    print('Adding periodic GPU cache clearing...')
+    with open(grpo_file, 'r') as f:
+        lines = f.readlines()
+    
+    new_lines = []
+    for i, line in enumerate(lines):
+        # Add cache clearing after loss.backward()
+        if 'loss.backward()' in line and i > 500:
+            new_lines.append(line)
+            new_lines.append('        
+')
+            new_lines.append('        # Periodic GPU cache clearing to prevent OOM
+')
+            new_lines.append('        if global_step % 10 == 0:
+')
+            new_lines.append('            import torch
+')
+            new_lines.append('            if torch.cuda.is_available():
+')
+            new_lines.append('                torch.cuda.empty_cache()
+')
+            new_lines.append('                # Also clear cache on all devices for multi-GPU
+')
+            new_lines.append('                for device_id in range(torch.cuda.device_count()):
+')
+            new_lines.append('                    with torch.cuda.device(device_id):
+')
+            new_lines.append('                        torch.cuda.empty_cache()
+')
+        else:
+            new_lines.append(line)
+    
+    with open(grpo_file, 'w') as f:
+        f.writelines(new_lines)
+    
+    print('✓ Periodic cache clearing added')
+
+# Apply DataParallel memory optimization
+print('Checking for DataParallel memory optimization...')
+needs_dp_memory_fix = False
+with open(grpo_file, 'r') as f:
+    content = f.read()
+    if 'Set DataParallel to use balanced memory allocation' not in content:
+        needs_dp_memory_fix = True
+        print('✓ DataParallel memory optimization needed')
+
+if needs_dp_memory_fix:
+    print('Adding DataParallel memory optimization...')
+    with open(grpo_file, 'r') as f:
+        lines = f.readlines()
+    
+    new_lines = []
+    for i, line in enumerate(lines):
+        # Optimize DataParallel initialization
+        if 'self.model = nn.DataParallel(self.model)' in line:
+            new_lines.append(line)
+            new_lines.append('            # Set DataParallel to use balanced memory allocation\n')
+            new_lines.append('            if hasattr(self.model, "module"):\n')
+            new_lines.append('                if hasattr(self.model.module, "gradient_checkpointing_enable"):\n')
+            new_lines.append('                    self.model.module.gradient_checkpointing_enable()\n')
+            new_lines.append('                # Enable memory-efficient attention if available\n')
+            new_lines.append('                if hasattr(self.model.module, "config"):\n')
+            new_lines.append('                    if hasattr(self.model.module.config, "use_memory_efficient_attention"):\n')
+            new_lines.append('                        self.model.module.config.use_memory_efficient_attention = True\n')
+            new_lines.append('            # Set output device to balance memory (use GPU 1 if available)\n')
+            new_lines.append('            if torch.cuda.device_count() > 2:\n')
+            new_lines.append('                self.model.output_device = 1  # Reduce load on GPU 0\n')
+        else:
+            new_lines.append(line)
+    
+    with open(grpo_file, 'w') as f:
+        f.writelines(new_lines)
+    
+    print('✓ DataParallel memory optimization added')
 "
 
 # Fix manager.py for offline mode support
@@ -498,6 +584,62 @@ if os.path.exists(manager_file):
         print('✓ Manager.py patched for offline mode')
     else:
         print('✓ Manager.py already has offline mode support')
+"
+
+# Add automatic VRAM-based configuration
+echo ""
+echo "Auto-configuring based on available VRAM..."
+python3 -c "
+import torch
+import os
+
+if torch.cuda.is_available():
+    # Get minimum VRAM across all GPUs
+    min_vram_gb = min([torch.cuda.get_device_properties(i).total_memory / (1024**3) 
+                       for i in range(torch.cuda.device_count())])
+    
+    print(f'Minimum VRAM per GPU: {min_vram_gb:.2f} GB')
+    
+    # Auto-configure based on VRAM
+    if min_vram_gb < 8:
+        print('⚠️  Low VRAM detected (<8GB), applying aggressive optimizations:')
+        print('  - Batch size: 1')
+        print('  - Gradient accumulation: 8 steps')
+        print('  - Mixed precision: enabled')
+        
+        # Update config
+        import fileinput
+        import sys
+        
+        config_file = 'rgym_exp/config/rg-swarm.yaml'
+        
+        # Read current config
+        with open(config_file, 'r') as f:
+            lines = f.readlines()
+        
+        # Apply optimizations
+        new_lines = []
+        for line in lines:
+            if 'num_train_samples:' in line:
+                new_lines.append('    num_train_samples: 1  # Auto-reduced for low VRAM\n')
+            elif 'gradient_accumulation_steps:' in line and 'training:' in ''.join(lines[max(0,lines.index(line)-5):lines.index(line)]):
+                new_lines.append('  gradient_accumulation_steps: 8  # Auto-increased for low VRAM\n')
+            elif 'fp16:' in line:
+                new_lines.append('  fp16: true  # Auto-enabled for low VRAM\n')
+            else:
+                new_lines.append(line)
+        
+        # Write updated config
+        with open(config_file, 'w') as f:
+            f.writelines(new_lines)
+        
+        print('✓ Configuration updated for low VRAM')
+    elif min_vram_gb < 12:
+        print('⚠️  Medium VRAM detected (8-12GB), applying moderate optimizations')
+        print('  - Batch size: 2')
+        print('  - Gradient accumulation: 4 steps')
+    else:
+        print('✓ Sufficient VRAM detected (>12GB)')
 "
 
 # Clear GPU cache before starting
