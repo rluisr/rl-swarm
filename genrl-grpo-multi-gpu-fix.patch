@@ -1,0 +1,28 @@
+--- .venv/lib/python3.10/site-packages/genrl/trainer/grpo_trainer.py.orig
++++ .venv/lib/python3.10/site-packages/genrl/trainer/grpo_trainer.py
+@@ -331,6 +331,14 @@
+ 
+         # Compute the loss
+         advantages = inputs["advantages"]
++        
++        # Handle DataParallel: ensure advantages match the current batch size
++        # This ensures compatibility when the model is wrapped in nn.DataParallel
++        current_batch_size = per_token_logps.shape[0]
++        if advantages.shape[0] != current_batch_size:
++            # Split advantages to match the current GPU's batch
++            advantages = advantages[:current_batch_size]
++            
+         # When using num_iterations == 1, old_per_token_logps == per_token_logps, so we can skip its computation
+         old_per_token_logps = (
+             inputs["old_per_token_logps"]
+@@ -338,6 +346,11 @@
+             else per_token_logps.detach()
+         )
+ 
++        # Also handle old_per_token_logps for DataParallel
++        if self.args.num_iterations > 1 and old_per_token_logps.shape[0] != current_batch_size:
++            old_per_token_logps = old_per_token_logps[:current_batch_size]
++
+         # Calculate ratios and loss terms
+         coef_1 = torch.exp(per_token_logps - old_per_token_logps)
+         coef_2 = torch.clamp(

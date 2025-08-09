@@ -174,6 +174,7 @@ if needs_compute_loss_fix:
         if i > 270 and 'input_ids = torch.cat([prompt_ids, completion_ids], dim=1)' in line:
             # Add dimension matching logic before concatenation
             new_lines.append('        # Ensure batch dimensions match for multi-GPU training\\n')
+            new_lines.append('        batch_adjusted = False\\n')
             new_lines.append('        if prompt_ids.shape[0] != completion_ids.shape[0]:\\n')
             new_lines.append('            # Handle batch size mismatch from num_generations duplication\\n')
             new_lines.append('            if prompt_ids.shape[0] % completion_ids.shape[0] == 0:\\n')
@@ -183,6 +184,7 @@ if needs_compute_loss_fix:
             new_lines.append('                # Reshape and take the appropriate generation for each batch item\\n')
             new_lines.append('                prompt_ids = prompt_ids.view(batch_size, num_gens, -1)[:, 0, :]\\n')
             new_lines.append('                prompt_mask = prompt_mask.view(batch_size, num_gens, -1)[:, 0, :]\\n')
+            new_lines.append('                batch_adjusted = True\\n')
             new_lines.append('            else:\\n')
             new_lines.append('                # Unexpected size mismatch, try to truncate to match\\n')
             new_lines.append('                min_batch = min(prompt_ids.shape[0], completion_ids.shape[0])\\n')
@@ -190,8 +192,24 @@ if needs_compute_loss_fix:
             new_lines.append('                prompt_mask = prompt_mask[:min_batch]\\n')
             new_lines.append('                completion_ids = completion_ids[:min_batch]\\n')
             new_lines.append('                completion_mask = completion_mask[:min_batch]\\n')
+            new_lines.append('                batch_adjusted = True\\n')
             new_lines.append('        \\n')
             new_lines.append(line)  # Add the original line
+        # Also fix advantages dimension after it's defined
+        elif i > 320 and 'advantages = inputs["advantages"]' in line:
+            new_lines.append(line)
+            new_lines.append('        # Adjust advantages dimensions if batch was adjusted\\n')
+            new_lines.append('        if "batch_adjusted" in locals() and batch_adjusted:\\n')
+            new_lines.append('            # Ensure advantages matches the adjusted batch size\\n')
+            new_lines.append('            expected_size = completion_ids.shape[0]\\n')
+            new_lines.append('            if advantages.shape[0] != expected_size:\\n')
+            new_lines.append('                if advantages.shape[0] % expected_size == 0:\\n')
+            new_lines.append('                    # Advantages were duplicated, reshape and take first\\n')
+            new_lines.append('                    num_gens = advantages.shape[0] // expected_size\\n')
+            new_lines.append('                    advantages = advantages.view(expected_size, num_gens)[:, 0]\\n')
+            new_lines.append('                else:\\n')
+            new_lines.append('                    # Truncate to match\\n')
+            new_lines.append('                    advantages = advantages[:expected_size]\\n')
         else:
             new_lines.append(line)
     
