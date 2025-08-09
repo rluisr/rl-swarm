@@ -58,16 +58,38 @@ class GRPOTrainerModule(GRPOLanguageTrainerModule, LoggerMixin):
                 self.processing_class = None
         
         # Multi-GPU support
+        # Log CUDA environment for debugging
+        import os
+        if 'CUDA_VISIBLE_DEVICES' in os.environ:
+            get_logger().info(f"CUDA_VISIBLE_DEVICES: {os.environ['CUDA_VISIBLE_DEVICES']}")
+        
         self.device_count = torch.cuda.device_count()
         if self.device_count > 1:
             get_logger().info(f"Multiple GPUs detected: {self.device_count}")
+            
+            # Get visible device IDs (respects CUDA_VISIBLE_DEVICES)
+            device_ids = list(range(self.device_count))
+            get_logger().info(f"Using GPU devices: {device_ids}")
+            
             # Wrap model with DataParallel for multi-GPU support
             if hasattr(self, 'model') and self.model is not None:
                 if not isinstance(self.model, nn.DataParallel):
-                    self.model = nn.DataParallel(self.model)
+                    # Move model to first available device
+                    self.model = self.model.cuda(device_ids[0])
+                    # Wrap with DataParallel, explicitly specifying device_ids
+                    self.model = nn.DataParallel(self.model, device_ids=device_ids)
                     # Add device attribute to DataParallel model for compatibility
-                    self.model.device = next(self.model.module.parameters()).device
-                    get_logger().info(f"Model wrapped with DataParallel across {self.device_count} GPUs")
+                    self.model.device = torch.device(f'cuda:{device_ids[0]}')
+                    get_logger().info(f"Model wrapped with DataParallel across GPUs: {device_ids}")
+        elif self.device_count == 1:
+            # Single GPU case - ensure model is on the correct device
+            get_logger().info("Single GPU detected")
+            if hasattr(self, 'model') and self.model is not None:
+                if not isinstance(self.model, nn.DataParallel):
+                    # Move model to the single available GPU (which is device 0 when CUDA_VISIBLE_DEVICES is set)
+                    self.model = self.model.cuda(0)
+                    self.model.device = torch.device('cuda:0')
+                    get_logger().info("Model moved to GPU 0")
         
         # Memory optimization settings
         self.gradient_checkpointing = kwargs.get("gradient_checkpointing", False)
