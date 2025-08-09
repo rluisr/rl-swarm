@@ -358,43 +358,43 @@ if needs_compute_loss_fix:
         # Find and fix the concatenation line
         if i > 270 and 'input_ids = torch.cat([prompt_ids, completion_ids], dim=1)' in line:
             # Add dimension matching logic before concatenation
-            new_lines.append('        # Ensure batch dimensions match for multi-GPU training\\n')
-            new_lines.append('        batch_adjusted = False\\n')
-            new_lines.append('        if prompt_ids.shape[0] != completion_ids.shape[0]:\\n')
-            new_lines.append('            # Handle batch size mismatch from num_generations duplication\\n')
-            new_lines.append('            if prompt_ids.shape[0] % completion_ids.shape[0] == 0:\\n')
-            new_lines.append('                # Prompts were duplicated by num_generations\\n')
-            new_lines.append('                num_gens = prompt_ids.shape[0] // completion_ids.shape[0]\\n')
-            new_lines.append('                batch_size = completion_ids.shape[0]\\n')
-            new_lines.append('                # Reshape and take the appropriate generation for each batch item\\n')
-            new_lines.append('                prompt_ids = prompt_ids.view(batch_size, num_gens, -1)[:, 0, :]\\n')
-            new_lines.append('                prompt_mask = prompt_mask.view(batch_size, num_gens, -1)[:, 0, :]\\n')
-            new_lines.append('                batch_adjusted = True\\n')
-            new_lines.append('            else:\\n')
-            new_lines.append('                # Unexpected size mismatch, try to truncate to match\\n')
-            new_lines.append('                min_batch = min(prompt_ids.shape[0], completion_ids.shape[0])\\n')
-            new_lines.append('                prompt_ids = prompt_ids[:min_batch]\\n')
-            new_lines.append('                prompt_mask = prompt_mask[:min_batch]\\n')
-            new_lines.append('                completion_ids = completion_ids[:min_batch]\\n')
-            new_lines.append('                completion_mask = completion_mask[:min_batch]\\n')
-            new_lines.append('                batch_adjusted = True\\n')
-            new_lines.append('        \\n')
+            new_lines.append('        # Ensure batch dimensions match for multi-GPU training\n')
+            new_lines.append('        batch_adjusted = False\n')
+            new_lines.append('        if prompt_ids.shape[0] != completion_ids.shape[0]:\n')
+            new_lines.append('            # Handle batch size mismatch from num_generations duplication\n')
+            new_lines.append('            if prompt_ids.shape[0] % completion_ids.shape[0] == 0:\n')
+            new_lines.append('                # Prompts were duplicated by num_generations\n')
+            new_lines.append('                num_gens = prompt_ids.shape[0] // completion_ids.shape[0]\n')
+            new_lines.append('                batch_size = completion_ids.shape[0]\n')
+            new_lines.append('                # Reshape and take the appropriate generation for each batch item\n')
+            new_lines.append('                prompt_ids = prompt_ids.view(batch_size, num_gens, -1)[:, 0, :]\n')
+            new_lines.append('                prompt_mask = prompt_mask.view(batch_size, num_gens, -1)[:, 0, :]\n')
+            new_lines.append('                batch_adjusted = True\n')
+            new_lines.append('            else:\n')
+            new_lines.append('                # Unexpected size mismatch, try to truncate to match\n')
+            new_lines.append('                min_batch = min(prompt_ids.shape[0], completion_ids.shape[0])\n')
+            new_lines.append('                prompt_ids = prompt_ids[:min_batch]\n')
+            new_lines.append('                prompt_mask = prompt_mask[:min_batch]\n')
+            new_lines.append('                completion_ids = completion_ids[:min_batch]\n')
+            new_lines.append('                completion_mask = completion_mask[:min_batch]\n')
+            new_lines.append('                batch_adjusted = True\n')
+            new_lines.append('        \n')
             new_lines.append(line)  # Add the original line
         # Also fix advantages dimension after it's defined
         elif i > 320 and 'advantages = inputs["advantages"]' in line:
             new_lines.append(line)
-            new_lines.append('        # Adjust advantages dimensions if batch was adjusted\\n')
-            new_lines.append('        if "batch_adjusted" in locals() and batch_adjusted:\\n')
-            new_lines.append('            # Ensure advantages matches the adjusted batch size\\n')
-            new_lines.append('            expected_size = completion_ids.shape[0]\\n')
-            new_lines.append('            if advantages.shape[0] != expected_size:\\n')
-            new_lines.append('                if advantages.shape[0] % expected_size == 0:\\n')
-            new_lines.append('                    # Advantages were duplicated, reshape and take first\\n')
-            new_lines.append('                    num_gens = advantages.shape[0] // expected_size\\n')
-            new_lines.append('                    advantages = advantages.view(expected_size, num_gens)[:, 0]\\n')
-            new_lines.append('                else:\\n')
-            new_lines.append('                    # Truncate to match\\n')
-            new_lines.append('                    advantages = advantages[:expected_size]\\n')
+            new_lines.append('        # Adjust advantages dimensions if batch was adjusted\n')
+            new_lines.append('        if "batch_adjusted" in locals() and batch_adjusted:\n')
+            new_lines.append('            # Ensure advantages matches the adjusted batch size\n')
+            new_lines.append('            expected_size = completion_ids.shape[0]\n')
+            new_lines.append('            if advantages.shape[0] != expected_size:\n')
+            new_lines.append('                if advantages.shape[0] % expected_size == 0:\n')
+            new_lines.append('                    # Advantages were duplicated, reshape and take first\n')
+            new_lines.append('                    num_gens = advantages.shape[0] // expected_size\n')
+            new_lines.append('                    advantages = advantages.view(expected_size, num_gens)[:, 0]\n')
+            new_lines.append('                else:\n')
+            new_lines.append('                    # Truncate to match\n')
+            new_lines.append('                    advantages = advantages[:expected_size]\n')
         else:
             new_lines.append(line)
     
@@ -402,6 +402,62 @@ if needs_compute_loss_fix:
         f.writelines(new_lines)
     
     print('✓ compute_loss fix applied successfully')
+
+# Apply enhanced clip_ratio fix for multi-GPU
+print('Checking for clip_ratio multi-GPU issue...')
+needs_clip_ratio_fix = False
+with open(grpo_file, 'r') as f:
+    content = f.read()
+    if 'Handle multi-GPU tensor size mismatch for clip_ratio' not in content:
+        needs_clip_ratio_fix = True
+        print('✓ clip_ratio multi-GPU fix needed')
+
+if needs_clip_ratio_fix:
+    print('Applying clip_ratio multi-GPU fix...')
+    with open(grpo_file, 'r') as f:
+        lines = f.readlines()
+    
+    new_lines = []
+    for i, line in enumerate(lines):
+        if 'clip_ratio = (is_clipped * completion_mask).sum() / completion_mask.sum()' in line:
+            # Add multi-GPU handling before clip_ratio calculation
+            new_lines.append('        # Handle multi-GPU tensor size mismatch for clip_ratio\n')
+            new_lines.append('        if is_clipped.shape[0] != completion_mask.shape[0]:\n')
+            new_lines.append('            # Check if this is a multi-GPU duplication issue\n')
+            new_lines.append('            if is_clipped.shape[0] % completion_mask.shape[0] == 0:\n')
+            new_lines.append('                # is_clipped was duplicated across GPUs\n')
+            new_lines.append('                num_gpus = is_clipped.shape[0] // completion_mask.shape[0]\n')
+            new_lines.append('                # Average across GPU duplicates\n')
+            new_lines.append('                is_clipped = is_clipped.view(num_gpus, -1).mean(dim=0)\n')
+            new_lines.append('            elif completion_mask.shape[0] % is_clipped.shape[0] == 0:\n')
+            new_lines.append('                # completion_mask was duplicated across GPUs\n')
+            new_lines.append('                num_gpus = completion_mask.shape[0] // is_clipped.shape[0]\n')
+            new_lines.append('                # Average across GPU duplicates\n')
+            new_lines.append('                completion_mask = completion_mask.view(num_gpus, -1).mean(dim=0)\n')
+            new_lines.append('            else:\n')
+            new_lines.append('                # Fallback: ensure same size by truncation\n')
+            new_lines.append('                min_size = min(is_clipped.shape[0], completion_mask.shape[0])\n')
+            new_lines.append('                is_clipped = is_clipped[:min_size]\n')
+            new_lines.append('                completion_mask = completion_mask[:min_size]\n')
+            new_lines.append('        \n')
+            new_lines.append('        # Additional shape compatibility check\n')
+            new_lines.append('        if is_clipped.shape != completion_mask.shape:\n')
+            new_lines.append('            # Flatten both tensors to 1D if dimensions differ\n')
+            new_lines.append('            is_clipped = is_clipped.view(-1)\n')
+            new_lines.append('            completion_mask = completion_mask.view(-1)\n')
+            new_lines.append('            # Ensure same length\n')
+            new_lines.append('            min_len = min(is_clipped.shape[0], completion_mask.shape[0])\n')
+            new_lines.append('            is_clipped = is_clipped[:min_len]\n')
+            new_lines.append('            completion_mask = completion_mask[:min_len]\n')
+            new_lines.append('        \n')
+            new_lines.append(line)
+        else:
+            new_lines.append(line)
+    
+    with open(grpo_file, 'w') as f:
+        f.writelines(new_lines)
+    
+    print('✓ clip_ratio multi-GPU fix applied successfully')
 "
 
 # Fix manager.py for offline mode support
