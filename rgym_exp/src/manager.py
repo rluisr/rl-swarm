@@ -155,9 +155,7 @@ class SwarmGameManager(BaseGameManager, DefaultGameManagerMixin):
             rewards = self.rewards[stage]
             for agent_id, agent_rewards in rewards.items():
                 for batch_id, batch_rewards in agent_rewards.items():
-                    tot = 0
-                    for generation_rewards in batch_rewards:
-                        tot += sum(generation_rewards)
+                    tot = sum(batch_rewards)
                     rewards_by_agent[agent_id] += tot
 
         return rewards_by_agent
