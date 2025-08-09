@@ -1,0 +1,15 @@
+--- a/genrl/trainer/grpo_trainer.py
++++ b/genrl/trainer/grpo_trainer.py
+@@ -1,3 +1,4 @@
++import torch
+ from typing import Optional, Dict, Any, List, Union, Literal
+ import warnings
+ from collections import defaultdict
+@@ -518,6 +519,8 @@
+         
+         # Convert rewards to tensor if needed
+         if not isinstance(rewards, torch.Tensor):
++            import torch  # Ensure torch is available in this scope
+             rewards = torch.tensor(rewards)
++            
+         return global_step

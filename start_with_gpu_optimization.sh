@@ -536,6 +536,62 @@ if needs_dp_memory_fix:
     print('✓ DataParallel memory optimization added')
 "
 
+# Fix torch import issue at line 521
+echo ""
+echo "Checking for torch import issue..."
+python3 -c "
+import os
+
+grpo_file = '.venv/lib/python3.10/site-packages/genrl/trainer/grpo_trainer.py'
+if os.path.exists(grpo_file):
+    with open(grpo_file, 'r') as f:
+        lines = f.readlines()
+    
+    needs_torch_fix = False
+    for i, line in enumerate(lines):
+        if i > 515 and i < 525 and 'rewards = torch.tensor(rewards)' in line:
+            # Check if torch is imported at the top
+            has_torch_import = False
+            for j in range(min(20, len(lines))):
+                if 'import torch' in lines[j]:
+                    has_torch_import = True
+                    break
+            if not has_torch_import:
+                needs_torch_fix = True
+                break
+    
+    if needs_torch_fix:
+        print('Fixing torch import issue...')
+        new_lines = []
+        
+        # Add torch import at the beginning if not present
+        import_added = False
+        for i, line in enumerate(lines):
+            if i == 0:
+                # Check first few lines for existing torch import
+                has_import = False
+                for j in range(min(20, len(lines))):
+                    if 'import torch' in lines[j]:
+                        has_import = True
+                        break
+                if not has_import:
+                    new_lines.append('import torch\n')
+                    import_added = True
+            
+            # Also add local import before the problematic line
+            if i > 515 and 'rewards = torch.tensor(rewards)' in line:
+                new_lines.append('            import torch  # Ensure torch is available in this scope\n')
+            
+            new_lines.append(line)
+        
+        with open(grpo_file, 'w') as f:
+            f.writelines(new_lines)
+        
+        print('✓ Torch import issue fixed')
+    else:
+        print('✓ Torch import already present or fix not needed')
+"
+
 # Fix manager.py for offline mode support
 echo ""
 echo "Checking manager.py for offline mode support..."
