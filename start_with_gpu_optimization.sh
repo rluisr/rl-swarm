@@ -617,15 +617,34 @@ if torch.cuda.is_available():
         with open(config_file, 'r') as f:
             lines = f.readlines()
         
-        # Apply optimizations
+        # Apply optimizations - safer YAML modification
         new_lines = []
-        for line in lines:
-            if 'num_train_samples:' in line:
-                new_lines.append('    num_train_samples: 1  # Auto-reduced for low VRAM\n')
-            elif 'gradient_accumulation_steps:' in line and 'training:' in ''.join(lines[max(0,lines.index(line)-5):lines.index(line)]):
-                new_lines.append('  gradient_accumulation_steps: 8  # Auto-increased for low VRAM\n')
-            elif 'fp16:' in line:
-                new_lines.append('  fp16: true  # Auto-enabled for low VRAM\n')
+        in_training = False
+        in_trainer_config = False
+        
+        for i, line in enumerate(lines):
+            # Track sections
+            if line.strip().startswith('training:'):
+                in_training = True
+                in_trainer_config = False
+            elif line.strip().startswith('trainer:'):
+                in_training = False
+                in_trainer_config = False
+            elif in_trainer_config and '  config:' in line:
+                in_trainer_config = True
+            
+            # Apply modifications based on context
+            if 'num_train_samples:' in line and not in_trainer_config:
+                new_lines.append('    num_train_samples: 1  # Auto-reduced for low VRAM
+')
+            elif 'gradient_accumulation_steps:' in line and in_training:
+                new_lines.append('  gradient_accumulation_steps: 8  # Auto-increased for low VRAM
+')
+            elif 'fp16: false' in line:
+                # Preserve indentation
+                indent = len(line) - len(line.lstrip())
+                new_lines.append(' ' * indent + 'fp16: true  # Auto-enabled for low VRAM
+')
             else:
                 new_lines.append(line)
         
