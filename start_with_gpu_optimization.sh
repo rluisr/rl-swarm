@@ -210,6 +210,14 @@ if patch_needed:
     
     print('✓ Patch applied successfully')
 
+# Check for tensor mismatch issue
+tensor_fix_needed = False
+with open(grpo_file, 'r') as f:
+    content = f.read()
+    if 'Flatten per_token_logps if it has extra dimensions' not in content:
+        tensor_fix_needed = True
+        print('✓ Tensor mismatch fix needed')
+
 # Fix indentation error if needed
 if indent_fix_needed:
     print('Fixing indentation error at line 343-345...')
@@ -243,6 +251,93 @@ if indent_fix_needed:
     subprocess.run(['sed', '-i', 's/\\\\!=/!=/g', grpo_file])
     
     print('✓ Indentation error fixed')
+
+# Check for completion_mask dimension mismatch
+completion_mask_fix_needed = False
+with open(grpo_file, 'r') as f:
+    content = f.read()
+    if 'Ensure per_token_loss and completion_mask have compatible shapes' not in content:
+        completion_mask_fix_needed = True
+        print('✓ Completion mask dimension fix needed')
+
+# Fix tensor mismatch if needed
+if tensor_fix_needed:
+    print('Fixing tensor dimension mismatch...')
+    with open(grpo_file, 'r') as f:
+        lines = f.readlines()
+    
+    new_lines = []
+    for i, line in enumerate(lines):
+        if i > 320 and 'advantages = inputs["advantages"]' in line:
+            new_lines.append(line)
+            # Add tensor flattening logic
+            new_lines.append('        \\n')
+            new_lines.append('        # Flatten per_token_logps if it has extra dimensions\\n')
+            new_lines.append('        if per_token_logps.dim() > 1:\\n')
+            new_lines.append('            per_token_logps = per_token_logps.view(-1)\\n')
+        elif i > 340 and i < 360 and 'old_per_token_logps = old_per_token_logps[:current_batch_size]' in line:
+            new_lines.append(line)
+            new_lines.append('\\n')
+            new_lines.append('        # Ensure old_per_token_logps is also flattened if needed\\n')
+            new_lines.append('        if old_per_token_logps.dim() > 1:\\n')
+            new_lines.append('            old_per_token_logps = old_per_token_logps.view(-1)\\n')
+            new_lines.append('        \\n')
+            new_lines.append('        # Final shape check and adjustment\\n')
+            new_lines.append('        if old_per_token_logps.shape[0] != per_token_logps.shape[0]:\\n')
+            new_lines.append('            old_per_token_logps = old_per_token_logps[:per_token_logps.shape[0]]\\n')
+        else:
+            new_lines.append(line)
+    
+    # Write the fixed file
+    with open(grpo_file, 'w') as f:
+        f.writelines(new_lines)
+    
+    print('✓ Tensor mismatch fix applied')
+
+# Fix completion_mask dimension mismatch if needed
+if completion_mask_fix_needed:
+    print('Fixing completion_mask dimension mismatch...')
+    with open(grpo_file, 'r') as f:
+        lines = f.readlines()
+    
+    new_lines = []
+    for i, line in enumerate(lines):
+        if 'loss = (per_token_loss * completion_mask).sum()' in line:
+            # Add shape adjustment before loss calculation
+            new_lines.append('        # Ensure per_token_loss and completion_mask have compatible shapes\\n')
+            new_lines.append('        if per_token_loss.dim() == 1 and completion_mask.dim() == 2:\\n')
+            new_lines.append('            completion_mask = completion_mask.view(-1)\\n')
+            new_lines.append('        elif per_token_loss.dim() == 2 and completion_mask.dim() == 1:\\n')
+            new_lines.append('            per_token_loss = per_token_loss.view(-1)\\n')
+            new_lines.append('        elif per_token_loss.shape != completion_mask.shape:\\n')
+            new_lines.append('            if per_token_loss.numel() == completion_mask.numel():\\n')
+            new_lines.append('                completion_mask = completion_mask.view(per_token_loss.shape)\\n')
+            new_lines.append('            else:\\n')
+            new_lines.append('                min_size = min(per_token_loss.view(-1).shape[0], completion_mask.view(-1).shape[0])\\n')
+            new_lines.append('                per_token_loss = per_token_loss.view(-1)[:min_size]\\n')
+            new_lines.append('                completion_mask = completion_mask.view(-1)[:min_size]\\n')
+            new_lines.append('        \\n')
+            new_lines.append(line)
+        elif 'is_clipped = ' in line and i > 395:
+            new_lines.append(line)
+            new_lines.append('        # Ensure compatible shapes for clip_ratio calculation\\n')
+            new_lines.append('        if is_clipped.shape != completion_mask.shape:\\n')
+            new_lines.append('            if is_clipped.dim() > completion_mask.dim():\\n')
+            new_lines.append('                is_clipped = is_clipped.view(-1)\\n')
+            new_lines.append('            elif completion_mask.dim() > is_clipped.dim():\\n')
+            new_lines.append('                completion_mask = completion_mask.view(-1)\\n')
+        else:
+            new_lines.append(line)
+    
+    # Write the fixed file
+    with open(grpo_file, 'w') as f:
+        f.writelines(new_lines)
+    
+    # Fix escape characters
+    import subprocess
+    subprocess.run(['sed', '-i', 's/\\\\!=/!=/g', grpo_file])
+    
+    print('✓ Completion mask dimension fix applied')
 
 # Check and apply compute_loss batch size mismatch fix
 print('Checking for compute_loss batch size issue...')
@@ -307,6 +402,46 @@ if needs_compute_loss_fix:
         f.writelines(new_lines)
     
     print('✓ compute_loss fix applied successfully')
+"
+
+# Fix manager.py for offline mode support
+echo ""
+echo "Checking manager.py for offline mode support..."
+python3 -c "
+import os
+
+manager_file = 'rgym_exp/src/manager.py'
+if os.path.exists(manager_file):
+    with open(manager_file, 'r') as f:
+        content = f.read()
+    
+    if 'CONNECT_TO_TESTNET' not in content:
+        print('Adding offline mode support to manager.py...')
+        with open(manager_file, 'r') as f:
+            lines = f.readlines()
+        
+        new_lines = []
+        for i, line in enumerate(lines):
+            if 'self.coordinator.register_peer(self.peer_id)' in line:
+                new_lines.append('        # Only register peer if connected to testnet\\n')
+                new_lines.append('        if os.environ.get(\"CONNECT_TO_TESTNET\", \"true\").lower() != \"false\":\\n')
+                new_lines.append('            ' + line)
+                new_lines.append('        else:\\n')
+                new_lines.append('            _LOG.info(\"Skipping peer registration (CONNECT_TO_TESTNET=false)\")\\n')
+            elif 'round, _ = self.coordinator.get_round_and_stage()' in line:
+                new_lines.append('        if os.environ.get(\"CONNECT_TO_TESTNET\", \"true\").lower() != \"false\":\\n')
+                new_lines.append('            ' + line)
+                new_lines.append('        else:\\n')
+                new_lines.append('            round = 1  # Default round for offline mode\\n')
+            else:
+                new_lines.append(line)
+        
+        with open(manager_file, 'w') as f:
+            f.writelines(new_lines)
+        
+        print('✓ Manager.py patched for offline mode')
+    else:
+        print('✓ Manager.py already has offline mode support')
 "
 
 # Clear GPU cache before starting

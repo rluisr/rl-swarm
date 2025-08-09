@@ -1,0 +1,36 @@
+--- a/genrl/trainer/grpo_trainer.py
++++ b/genrl/trainer/grpo_trainer.py
+@@ -326,6 +326,18 @@
+         # Compute the loss
+         advantages = inputs["advantages"]
+         
++        # Debug logging for tensor shapes
++        import logging
++        logger = logging.getLogger(__name__)
++        if hasattr(self, '_debug_shapes'):
++            logger.debug(f"Initial advantages shape: {advantages.shape}")
++            logger.debug(f"per_token_logps shape: {per_token_logps.shape}")
++            if per_token_logps.dim() > 1:
++                logger.debug(f"per_token_logps dim: {per_token_logps.dim()}")
++        
++        # Flatten per_token_logps if it has extra dimensions
++        if per_token_logps.dim() > 1:
++            per_token_logps = per_token_logps.view(-1)
++        
+         # Handle DataParallel: ensure advantages match the current batch size
+         # This ensures compatibility when the model is wrapped in nn.DataParallel
+         current_batch_size = per_token_logps.shape[0]
+@@ -344,6 +356,13 @@
+         if self.args.num_iterations > 1 and old_per_token_logps.shape[0] != current_batch_size:
+             old_per_token_logps = old_per_token_logps[:current_batch_size]
+ 
++        # Ensure old_per_token_logps is also flattened if needed
++        if old_per_token_logps.dim() > 1:
++            old_per_token_logps = old_per_token_logps.view(-1)
++        
++        # Final shape check and adjustment
++        if old_per_token_logps.shape[0] != per_token_logps.shape[0]:
++            old_per_token_logps = old_per_token_logps[:per_token_logps.shape[0]]
+ 
+         # Calculate ratios and loss terms
+         coef_1 = torch.exp(per_token_logps - old_per_token_logps)
