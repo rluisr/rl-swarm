@@ -592,57 +592,21 @@ if torch.cuda.is_available():
     
     # Auto-configure based on VRAM
     if min_vram_gb < 8:
-        print('⚠️  Low VRAM detected (<8GB), applying aggressive optimizations:')
+        print('⚠️  Low VRAM detected (<8GB)')
+        print('  Configuration already optimized for low VRAM:')
         print('  - Batch size: 1')
         print('  - Gradient accumulation: 8 steps')
         print('  - Mixed precision: enabled')
-        
-        # Update config
-        config_file = 'rgym_exp/config/rg-swarm.yaml'
-        
-        # Read current config
-        with open(config_file, 'r') as f:
-            lines = f.readlines()
-        
-        # Apply optimizations - safer YAML modification
-        new_lines = []
-        in_training = False
-        in_trainer_config = False
-        
-        for i, line in enumerate(lines):
-            # Track sections
-            if line.strip().startswith('training:'):
-                in_training = True
-                in_trainer_config = False
-            elif line.strip().startswith('trainer:'):
-                in_training = False
-                in_trainer_config = False
-            elif in_trainer_config and '  config:' in line:
-                in_trainer_config = True
-            
-            # Apply modifications based on context
-            if 'num_train_samples:' in line and not in_trainer_config:
-                new_lines.append('    num_train_samples: 1  # Auto-reduced for low VRAM\n')
-            elif 'gradient_accumulation_steps:' in line and in_training:
-                new_lines.append('  gradient_accumulation_steps: 8  # Auto-increased for low VRAM\n')
-            elif 'fp16: false' in line:
-                # Preserve indentation
-                indent = len(line) - len(line.lstrip())
-                new_lines.append(' ' * indent + 'fp16: true  # Auto-enabled for low VRAM\n')
-            else:
-                new_lines.append(line)
-        
-        # Write updated config
-        with open(config_file, 'w') as f:
-            f.writelines(new_lines)
-        
-        print('✓ Configuration updated for low VRAM')
+        print('  - Using pre-configured rg-swarm.yaml')
     elif min_vram_gb < 12:
-        print('⚠️  Medium VRAM detected (8-12GB), applying moderate optimizations')
+        print('⚠️  Medium VRAM detected (8-12GB)')
+        print('  Configuration settings:')
         print('  - Batch size: 2')
         print('  - Gradient accumulation: 4 steps')
+        print('  Note: Consider adjusting config if needed')
     else:
         print('✓ Sufficient VRAM detected (>12GB)')
+        print('  Using default configuration')
 EOF
 
 # Clear GPU cache before starting

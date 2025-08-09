@@ -1,0 +1,91 @@
+data_dir: reasoning-gym-data
+log_dir: logs
+
+# Model pool configurations
+default_large_model_pool:
+  - Gensyn/Meta-Llama-3-8B-Instruct
+  - mistralai/Mistral-7B-Instruct-v0.3
+  - Qwen/Qwen2-7B-Instruct
+
+default_small_model_pool:
+  - Gensyn/Qwen2.5-0.5B-Instruct
+  - HuggingFaceTB/SmolLM2-1.7B-Instruct
+  - Qwen/Qwen2.5-1.5B-Instruct
+
+training:
+  max_round: 1000000
+  max_stage: 1
+  hf_push_frequency: 1
+  num_generations: 2
+  num_transplant_trees: 2
+  seed: 42
+  fp16: true  # Enable mixed precision for low VRAM
+  # Memory optimization settings
+  gradient_checkpointing: true # Enable gradient checkpointing to reduce memory usage
+  gradient_accumulation_steps: 8 # Increased for low VRAM
+  clear_cache_every_n_rounds: 10 # Clear GPU cache periodically
+  auto_batch_size: true # Automatically adjust batch size based on available memory
+
+communications:
+  initial_peers:
+    - /ip4/38.101.215.12/tcp/30011/p2p/QmQ2gEXoPJg6iMBSUFWGzAabS2VhnzuS782Y637hGjfsRJ
+    - /ip4/38.101.215.13/tcp/30012/p2p/QmWhiaLrx3HRZfgXc2i7KW5nMUNK7P9tRc71yFJdGEZKkC
+    - /ip4/38.101.215.14/tcp/30013/p2p/QmQa1SCfYTxx7RvU7qJJRo79Zm1RAwPpkeLueDVJuBBmFp
+
+eval:
+  judge_base_url: https://swarm-judge-102957787771.us-east1.run.app
+
+hydra:
+  run:
+    dir: ${log_dir}
+
+game_manager:
+  _target_: rgym_exp.src.manager.SwarmGameManager
+  max_stage: ${training.max_stage}
+  max_round: ${training.max_round}
+  log_dir: ${log_dir}
+  hf_token: ${oc.env:HUGGINGFACE_ACCESS_TOKEN,null}
+  hf_push_frequency: ${training.hf_push_frequency}
+  run_mode: "train_and_evaluate"
+  bootnodes: ${communications.initial_peers}
+  clear_cache_every_n_rounds: ${training.clear_cache_every_n_rounds}
+  game_state: 
+    _target_: genrl.state.game_state.GameState
+    round: 0
+    stage: 0
+  reward_manager:
+    _target_: genrl.rewards.DefaultRewardManager
+    reward_fn_store:
+      _target_: genrl.rewards.reward_store.RewardFnStore
+      max_rounds: ${training.max_round}
+      reward_fn_stores:
+        - _target_: genrl.rewards.reward_store.RoundRewardFnStore
+          num_stages: ${training.max_stage}
+          reward_fns:
+            - _target_: rgym_exp.src.rewards.RGRewards
+  trainer:
+    _target_: rgym_exp.src.trainer.GRPOTrainerModule
+    models:
+      - _target_: transformers.AutoModelForCausalLM.from_pretrained
+        pretrained_model_name_or_path: ${oc.env:MODEL_NAME, ${gpu_model_choice:${default_large_model_pool},${default_small_model_pool}}} 
+    config:
+      _target_: trl.trainer.GRPOConfig
+      logging_dir: ${log_dir}
+      fp16: true  # Enable mixed precision for low VRAM
+      epsilon: 0.2
+      epsilon_high: 0.28
+      num_generations: ${training.num_generations}
+      gradient_checkpointing: ${training.gradient_checkpointing}
+      gradient_accumulation_steps: ${training.gradient_accumulation_steps}
+      per_device_train_batch_size: 1  # Reduced for low VRAM
+  data_manager:
+    _target_: rgym_exp.src.data.ReasoningGymDataManager
+    yaml_config_path: "rgym_exp/src/datasets.yaml"
+
+# Function to choose GPU model based on availability
+gpu_model_choice:
+  _target_: builtins.getattr
+  _args_:
+    - ${oc.env:CPU_ONLY,false}
+    - __eq__
+    - true

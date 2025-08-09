@@ -19,7 +19,16 @@ def main(cfg: DictConfig):
     is_master = False
     HivemindRendezvouz.init(is_master=is_master)
 
-    game_manager = instantiate(cfg.game_manager)
+    # Instantiate coordinator and communication separately
+    coordinator = instantiate(cfg.game_manager.coordinator)
+    communication = instantiate(cfg.game_manager.communication)
+    
+    # Pass them to game_manager
+    game_manager = instantiate(
+        cfg.game_manager,
+        coordinator=coordinator,
+        communication=communication
+    )
     game_manager.run_game()
 
 
