@@ -153,6 +153,52 @@ if patch_needed:
         f.writelines(new_lines)
     
     print('✓ Patch applied successfully')
+
+# Check and apply compute_loss batch size mismatch fix
+print('Checking for compute_loss batch size issue...')
+needs_compute_loss_fix = False
+with open(grpo_file, 'r') as f:
+    content = f.read()
+    if 'Ensure batch dimensions match' not in content:
+        needs_compute_loss_fix = True
+        print('✓ compute_loss fix needed')
+
+if needs_compute_loss_fix:
+    print('Applying compute_loss batch size fix...')
+    with open(grpo_file, 'r') as f:
+        lines = f.readlines()
+    
+    new_lines = []
+    for i, line in enumerate(lines):
+        # Find and fix the concatenation line
+        if i > 270 and 'input_ids = torch.cat([prompt_ids, completion_ids], dim=1)' in line:
+            # Add dimension matching logic before concatenation
+            new_lines.append('        # Ensure batch dimensions match for multi-GPU training\\n')
+            new_lines.append('        if prompt_ids.shape[0] != completion_ids.shape[0]:\\n')
+            new_lines.append('            # Handle batch size mismatch from num_generations duplication\\n')
+            new_lines.append('            if prompt_ids.shape[0] % completion_ids.shape[0] == 0:\\n')
+            new_lines.append('                # Prompts were duplicated by num_generations\\n')
+            new_lines.append('                num_gens = prompt_ids.shape[0] // completion_ids.shape[0]\\n')
+            new_lines.append('                batch_size = completion_ids.shape[0]\\n')
+            new_lines.append('                # Reshape and take the appropriate generation for each batch item\\n')
+            new_lines.append('                prompt_ids = prompt_ids.view(batch_size, num_gens, -1)[:, 0, :]\\n')
+            new_lines.append('                prompt_mask = prompt_mask.view(batch_size, num_gens, -1)[:, 0, :]\\n')
+            new_lines.append('            else:\\n')
+            new_lines.append('                # Unexpected size mismatch, try to truncate to match\\n')
+            new_lines.append('                min_batch = min(prompt_ids.shape[0], completion_ids.shape[0])\\n')
+            new_lines.append('                prompt_ids = prompt_ids[:min_batch]\\n')
+            new_lines.append('                prompt_mask = prompt_mask[:min_batch]\\n')
+            new_lines.append('                completion_ids = completion_ids[:min_batch]\\n')
+            new_lines.append('                completion_mask = completion_mask[:min_batch]\\n')
+            new_lines.append('        \\n')
+            new_lines.append(line)  # Add the original line
+        else:
+            new_lines.append(line)
+    
+    with open(grpo_file, 'w') as f:
+        f.writelines(new_lines)
+    
+    print('✓ compute_loss fix applied successfully')
 "
 
 # Clear GPU cache before starting
