@@ -1,0 +1,15 @@
+--- a/genrl/trainer/grpo_trainer.py
++++ b/genrl/trainer/grpo_trainer.py
+@@ -340,9 +340,9 @@
+             else per_token_logps.detach()
+         )
+ 
+- # Also handle old_per_token_logps for DataParallel
+- if self.args.num_iterations > 1 and old_per_token_logps.shape[0] != current_batch_size:
+-     old_per_token_logps = old_per_token_logps[:current_batch_size]
++        # Also handle old_per_token_logps for DataParallel
++        if self.args.num_iterations > 1 and old_per_token_logps.shape[0] != current_batch_size:
++            old_per_token_logps = old_per_token_logps[:current_batch_size]
+ 
+ 
+         # Calculate ratios and loss terms

@@ -83,23 +83,79 @@ esac
 # Apply genrl library patch for multi-GPU support
 echo ""
 echo "Checking and applying genrl library patches..."
+
+# Also check and fix remote server if available
+if command -v ssh &> /dev/null && ssh -o ConnectTimeout=2 hiveos.luis.local -l user "exit" 2>/dev/null; then
+    echo "Applying patches on remote server..."
+    ssh hiveos.luis.local -l user "sudo python3 - << 'EOF'
+import os
+import sys
+
+grpo_file = '/root/test/.venv/lib/python3.10/site-packages/genrl/trainer/grpo_trainer.py'
+if os.path.exists(grpo_file):
+    with open(grpo_file, 'r') as f:
+        lines = f.readlines()
+    
+    fixed = False
+    new_lines = []
+    for i, line in enumerate(lines):
+        if i > 340 and i < 350:
+            if line.startswith(' # Also handle old_per_token_logps'):
+                new_lines.append('        # Also handle old_per_token_logps for DataParallel\\n')
+                fixed = True
+            elif line.startswith(' if self.args.num_iterations > 1'):
+                new_lines.append('        if self.args.num_iterations > 1 and old_per_token_logps.shape[0] != current_batch_size:\\n')
+                fixed = True
+            elif line.startswith('     old_per_token_logps = old_per_token_logps'):
+                new_lines.append('            old_per_token_logps = old_per_token_logps[:current_batch_size]\\n')
+                fixed = True
+            else:
+                new_lines.append(line)
+        else:
+            new_lines.append(line)
+    
+    if fixed:
+        with open(grpo_file, 'w') as f:
+            f.writelines(new_lines)
+        # Also fix any backslash escape issues
+        import subprocess
+        subprocess.run(['sed', '-i', 's/\\\\!=/!=/g', grpo_file])
+        print('✓ Remote server patched')
+    else:
+        print('✓ Remote server already patched or no fix needed')
+else:
+    print('✗ genrl library not found on remote server')
+EOF"
+fi
+
 python3 -c "
 import os
 import sys
 
 # Check if patch is needed
 patch_needed = False
+indent_fix_needed = False
 grpo_file = '.venv/lib/python3.10/site-packages/genrl/trainer/grpo_trainer.py'
 
 if os.path.exists(grpo_file):
     with open(grpo_file, 'r') as f:
         content = f.read()
-        # Check if patch is already applied
+        lines = content.split('\n')
+        
+        # Check if rewards patch is already applied
         if 'Handle different reward tensor dimensions' not in content:
             patch_needed = True
-            print('✓ Patch needed for genrl library')
+            print('✓ Rewards patch needed for genrl library')
         else:
-            print('✓ Patch already applied')
+            print('✓ Rewards patch already applied')
+            
+        # Check for indentation error at line 343-345
+        for i, line in enumerate(lines):
+            if i > 340 and i < 350:
+                if line.startswith(' # Also handle old_per_token_logps'):
+                    indent_fix_needed = True
+                    print('✓ Indentation fix needed at line', i+1)
+                    break
 else:
     print('✗ genrl library not found at expected location')
     sys.exit(0)
@@ -153,6 +209,40 @@ if patch_needed:
         f.writelines(new_lines)
     
     print('✓ Patch applied successfully')
+
+# Fix indentation error if needed
+if indent_fix_needed:
+    print('Fixing indentation error at line 343-345...')
+    with open(grpo_file, 'r') as f:
+        lines = f.readlines()
+    
+    new_lines = []
+    for i, line in enumerate(lines):
+        # Fix lines 343-345 with incorrect indentation
+        if i > 340 and i < 350:
+            if line.startswith(' # Also handle old_per_token_logps'):
+                # Fix comment indentation
+                new_lines.append('        # Also handle old_per_token_logps for DataParallel\\n')
+            elif line.startswith(' if self.args.num_iterations > 1'):
+                # Fix if statement indentation
+                new_lines.append('        if self.args.num_iterations > 1 and old_per_token_logps.shape[0] != current_batch_size:\\n')
+            elif line.startswith('     old_per_token_logps = old_per_token_logps'):
+                # Fix assignment indentation
+                new_lines.append('            old_per_token_logps = old_per_token_logps[:current_batch_size]\\n')
+            else:
+                new_lines.append(line)
+        else:
+            new_lines.append(line)
+    
+    # Write the fixed file
+    with open(grpo_file, 'w') as f:
+        f.writelines(new_lines)
+    
+    # Fix any backslash escape issues
+    import subprocess
+    subprocess.run(['sed', '-i', 's/\\\\!=/!=/g', grpo_file])
+    
+    print('✓ Indentation error fixed')
 
 # Check and apply compute_loss batch size mismatch fix
 print('Checking for compute_loss batch size issue...')
