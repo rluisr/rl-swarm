@@ -479,26 +479,16 @@ if needs_cache_clear_fix:
         # Add cache clearing after loss.backward()
         if 'loss.backward()' in line and i > 500:
             new_lines.append(line)
-            new_lines.append('        
-')
-            new_lines.append('        # Periodic GPU cache clearing to prevent OOM
-')
-            new_lines.append('        if global_step % 10 == 0:
-')
-            new_lines.append('            import torch
-')
-            new_lines.append('            if torch.cuda.is_available():
-')
-            new_lines.append('                torch.cuda.empty_cache()
-')
-            new_lines.append('                # Also clear cache on all devices for multi-GPU
-')
-            new_lines.append('                for device_id in range(torch.cuda.device_count()):
-')
-            new_lines.append('                    with torch.cuda.device(device_id):
-')
-            new_lines.append('                        torch.cuda.empty_cache()
-')
+            new_lines.append('        \n')
+            new_lines.append('        # Periodic GPU cache clearing to prevent OOM\n')
+            new_lines.append('        if global_step % 10 == 0:\n')
+            new_lines.append('            import torch\n')
+            new_lines.append('            if torch.cuda.is_available():\n')
+            new_lines.append('                torch.cuda.empty_cache()\n')
+            new_lines.append('                # Also clear cache on all devices for multi-GPU\n')
+            new_lines.append('                for device_id in range(torch.cuda.device_count()):\n')
+            new_lines.append('                    with torch.cuda.device(device_id):\n')
+            new_lines.append('                        torch.cuda.empty_cache()\n')
         else:
             new_lines.append(line)
     
@@ -635,16 +625,13 @@ if torch.cuda.is_available():
             
             # Apply modifications based on context
             if 'num_train_samples:' in line and not in_trainer_config:
-                new_lines.append('    num_train_samples: 1  # Auto-reduced for low VRAM
-')
+                new_lines.append('    num_train_samples: 1  # Auto-reduced for low VRAM\n')
             elif 'gradient_accumulation_steps:' in line and in_training:
-                new_lines.append('  gradient_accumulation_steps: 8  # Auto-increased for low VRAM
-')
+                new_lines.append('  gradient_accumulation_steps: 8  # Auto-increased for low VRAM\n')
             elif 'fp16: false' in line:
                 # Preserve indentation
                 indent = len(line) - len(line.lstrip())
-                new_lines.append(' ' * indent + 'fp16: true  # Auto-enabled for low VRAM
-')
+                new_lines.append(' ' * indent + 'fp16: true  # Auto-enabled for low VRAM\n')
             else:
                 new_lines.append(line)
         
