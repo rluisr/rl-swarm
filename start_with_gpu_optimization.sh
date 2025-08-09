@@ -579,7 +579,7 @@ if os.path.exists(manager_file):
 # Add automatic VRAM-based configuration
 echo ""
 echo "Auto-configuring based on available VRAM..."
-python3 -c "
+python3 << 'EOF'
 import torch
 import os
 
@@ -598,9 +598,6 @@ if torch.cuda.is_available():
         print('  - Mixed precision: enabled')
         
         # Update config
-        import fileinput
-        import sys
-        
         config_file = 'rgym_exp/config/rg-swarm.yaml'
         
         # Read current config
@@ -646,7 +643,7 @@ if torch.cuda.is_available():
         print('  - Gradient accumulation: 4 steps')
     else:
         print('✓ Sufficient VRAM detected (>12GB)')
-"
+EOF
 
 # Clear GPU cache before starting
 echo ""
