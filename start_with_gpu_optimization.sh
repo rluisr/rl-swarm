@@ -80,6 +80,81 @@ case $option in
         ;;
 esac
 
+# Apply genrl library patch for multi-GPU support
+echo ""
+echo "Checking and applying genrl library patches..."
+python3 -c "
+import os
+import sys
+
+# Check if patch is needed
+patch_needed = False
+grpo_file = '.venv/lib/python3.10/site-packages/genrl/trainer/grpo_trainer.py'
+
+if os.path.exists(grpo_file):
+    with open(grpo_file, 'r') as f:
+        content = f.read()
+        # Check if patch is already applied
+        if 'Handle different reward tensor dimensions' not in content:
+            patch_needed = True
+            print('✓ Patch needed for genrl library')
+        else:
+            print('✓ Patch already applied')
+else:
+    print('✗ genrl library not found at expected location')
+    sys.exit(0)
+
+if patch_needed:
+    print('Applying rewards dimension fix...')
+    # Read the file
+    with open(grpo_file, 'r') as f:
+        lines = f.readlines()
+    
+    # Find and replace the problematic section
+    new_lines = []
+    i = 0
+    while i < len(lines):
+        if 'with torch.no_grad():' in lines[i] and i > 420 and i < 440:
+            # Found the target section
+            new_lines.append(lines[i])
+            # Skip the original problematic lines
+            j = i + 1
+            while j < len(lines) and 'advantages = torch.flatten' not in lines[j]:
+                j += 1
+            
+            # Add the fixed code
+            new_lines.append('            # Handle different reward tensor dimensions\\n')
+            new_lines.append('            if rewards.dim() == 1:\\n')
+            new_lines.append('                # 1D tensor case (single reward per sample)\\n')
+            new_lines.append('                advantages = rewards - rewards.mean()\\n')
+            new_lines.append('                if rewards.numel() > 1:\\n')
+            new_lines.append('                    advantages /= rewards.std() + 1e-8\\n')
+            new_lines.append('            else:\\n')
+            new_lines.append('                # 2D tensor case (multiple rewards per sample)\\n')
+            new_lines.append('                advantages = rewards - rewards.mean(dim=1, keepdim=True)\\n')
+            new_lines.append('                if rewards.shape[1] > 1:\\n')
+            new_lines.append('                    advantages /= rewards.std(dim=1, keepdim=True) + 1e-8\\n')
+            
+            # Continue from where we left off
+            i = j
+        else:
+            new_lines.append(lines[i])
+            i += 1
+    
+    # Backup original file
+    import shutil
+    backup_file = grpo_file + '.backup'
+    if not os.path.exists(backup_file):
+        shutil.copy(grpo_file, backup_file)
+        print(f'✓ Backup created: {backup_file}')
+    
+    # Write the patched file
+    with open(grpo_file, 'w') as f:
+        f.writelines(new_lines)
+    
+    print('✓ Patch applied successfully')
+"
+
 # Clear GPU cache before starting
 echo ""
 echo "Clearing GPU cache..."
